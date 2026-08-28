@@ -4,6 +4,10 @@
 
 [English](README.md) | **简体中文**
 
+> ### 🚀 [打开快速安装器](https://ns.sidluo.com/)
+>
+> 无需 GitHub，无需命令行，直接部署到你自己的 Cloudflare 账号。
+
 昵称：**Nightscout 泡面版**（The Instant Noodle Edition）
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
@@ -37,6 +41,7 @@ Nightscout 已经提供了非常好的泡面，但是没有叉子和开水（曾
 
 ## 使用方法
 
+- [打开快速安装器](https://ns.sidluo.com/)
 - [初次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
 
 ## Nightscout 与 Nightscout for Cloudflare
@@ -64,6 +69,19 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 - [部署与首次使用](docs/DEPLOYMENT.zh-CN.md)
 - [Cloudflare 架构](docs/ARCHITECTURE.md)
 - [上游兼容性矩阵](docs/UPSTREAM_COMPATIBILITY.md)
+
+## 安全说明
+
+Nightscout for Cloudflare 是独立、非官方的开源社区项目，不是 Nightscout 官方
+版本，也不提供有保证的技术或医疗支持。本项目没有获得任何用于糖尿病治疗的正式
+批准或监管认可。自行部署者需要自行负责构建、配置、安全、维护和运行，并自行
+承担使用风险。
+
+Nightscout for Cloudflare 需要正常的网络连接和可用的 Cloudflare 服务。不得把
+它作为了解血糖数值或趋势的唯一方式，也不得将其作为诊断、治疗或胰岛素剂量决定
+的依据。应为意外故障做好准备，并始终保留独立检查血糖的方法。
+
+以上说明沿用 [Nightscout 官方安全指引](https://nightscout.github.io/) 的结构和核心原则。
 
 ## License and attribution
 

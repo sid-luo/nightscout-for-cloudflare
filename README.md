@@ -4,6 +4,10 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
+> ### 🚀 [Open the web installer](https://nscf.sidluo.com/)
+>
+> No GitHub. No command line. Deploy directly to your own Cloudflare account.
+
 Nickname: **The Instant Noodle Edition**
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
@@ -41,6 +45,7 @@ in the time it takes to make instant noodles, you can get a Nightscout.
 
 ## How to use
 
+- [Open the web installer](https://nscf.sidluo.com/)
 - [First-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
 
 ## Nightscout and Nightscout for Cloudflare
@@ -70,6 +75,23 @@ present.
 - [Deployment and first use](docs/DEPLOYMENT.md)
 - [Cloudflare architecture](docs/ARCHITECTURE.md)
 - [Upstream compatibility matrix](docs/UPSTREAM_COMPATIBILITY.md)
+
+## Safety information
+
+Nightscout for Cloudflare is an independent, unofficial, open-source community
+project. It is not an official Nightscout release, does not come with guaranteed
+technical or medical support, and has not been officially approved or regulated
+for diabetes therapy or treatment. Anyone who deploys it is responsible for
+building, configuring, securing, maintaining and operating it, and does so at
+their own risk.
+
+Nightscout for Cloudflare requires a working internet connection and the
+availability of Cloudflare services. Do not rely on it as your only way to know
+your blood glucose values or trends, or as the basis for diagnosis, treatment or
+insulin dosing. Be ready for unexpected failures and always keep an independent
+way to check your blood glucose levels.
+
+These precautions follow the [official Nightscout safety guidance](https://nightscout.github.io/).
 
 ## License and attribution
 
