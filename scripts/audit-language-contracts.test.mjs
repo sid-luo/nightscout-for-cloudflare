@@ -24,11 +24,17 @@ async function jsonFiles(directory, relative = "") {
 test("all locked Nightscout translations are valid and deployed byte-for-byte", async () => {
   const files = await jsonFiles(upstream);
   assert.equal(files.length, 33);
-  assert.deepEqual(await jsonFiles(deployed), files);
+  const deployedFiles = await jsonFiles(deployed);
+  assert.deepEqual(deployedFiles, [...files, "sl_SL.json"].sort());
   for (const file of files) {
     const source = await readFile(path.join(upstream, file));
     const asset = await readFile(path.join(deployed, file));
     assert.doesNotThrow(() => JSON.parse(source.toString("utf8")), file);
     assert.deepEqual(asset, source, file);
   }
+  assert.deepEqual(
+    await readFile(path.join(deployed, "sl_SL.json")),
+    await readFile(path.join(upstream, "sl_SI.json")),
+    "Slovenian compatibility alias must stay byte-identical to sl_SI.json",
+  );
 });

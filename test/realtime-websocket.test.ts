@@ -839,7 +839,8 @@ describe("direct Engine.IO 4 WebSocket transport", () => {
         nextPingAt: null,
         pongDeadline: Date.now() - 1,
       } satisfies StoredWebSocketAttachment);
-      await state.storage.setAlarm(Date.now() - 1);
+      // The test triggers this alarm after eviction; avoid an automatic alarm race.
+      await state.storage.setAlarm(Date.now() + 60_000);
     });
 
     await evictDurableObject(stub);

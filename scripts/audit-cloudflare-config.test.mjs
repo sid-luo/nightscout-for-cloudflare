@@ -50,7 +50,7 @@ test("Deploy to Cloudflare template requests one plaintext value and a clean-sou
     "node --test scripts/cloudflare-auto-update.test.mjs",
   );
   assert.equal(packageJson.scripts?.deploy, "wrangler deploy");
-  assert.equal(packageJson.version, "1.1.1-beta");
+  assert.equal(packageJson.version, "1.2.0");
   assert.equal(
     packageJson.repository?.url,
     "git+https://github.com/sid-luo/nightscout-for-cloudflare.git",

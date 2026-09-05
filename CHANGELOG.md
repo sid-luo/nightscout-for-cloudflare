@@ -4,18 +4,15 @@
 
 This log covers Nightscout for Cloudflare changes. The upstream Nightscout
 version is tracked separately. Existing users should follow the
-[upgrade instructions](docs/DEPLOYMENT.md#updating-an-existing-deployment)
-for their original installation method.
+[upgrade instructions](README.md#2-upgrading). Upgrades currently support only instances deployed with the quick installer.
 
-## 2026-09-06 — Reduce repeated reads during AAPS synchronization
+## 1.2.0 — Read optimization and existing-instance upgrades (2026-09-06)
 
-**Availability: merged into GitHub `main`; no separate version release yet.**
-The project version remains `1.1.1-beta`, so that version string alone does not
-identify whether an existing instance includes this fix. See the
-[read optimization commit](https://github.com/sid-luo/nightscout-for-cloudflare/commit/df9a894a0c7263fff0cb86a779f3cadf38f1b0a5).
+This release includes the read optimization. Both Chinese and English upgrade pages are live; existing deployments require the user to confirm an upgrade.
 
 ### Changes
 
+- Preserve the Slovenian translation compatibility alias used by the web installer.
 - Reduce repeated historical queries when AAPS/NSClientV3 device-status uploads
   update the website.
 - Reuse unchanged glucose query results and merge the changed device-status row.
@@ -39,16 +36,17 @@ This measures a particular upload scenario, not a guaranteed 98% reduction in
 account-wide daily usage. Cloudflare's free read and write quotas remain
 unchanged. See the [measurement details and limits](docs/performance/realtime-read-amplification.md).
 
+### Web upgrade flow
+
+- Add separate upgrade pages with links to and from the installer. Reuse each site's OAuth app and return to the upgrade page in the same language.
+- Identify the original instance and verify database bindings. Update code and assets while keeping the address, database, password and settings.
+- Compare the actual release fingerprint, not only the version number. Support retrying confirmation after a temporary failure in the final step.
+- Fix the authorization leave-page prompt and Cloudflare discovery pagination parameters; read all result pages.
+- The bilingual installer passed 129 tests, type checking and deployment build checks. Mock browser checks cover confirmation, refresh and retry, address preservation, error states and mobile layout.
+
 ### Getting the update
 
-- **Installed through the GitHub Deploy to Cloudflare button:** deployments with
-  the build updater that meet its activation conditions can rebuild using the
-  [upgrade instructions](docs/DEPLOYMENT.md#updating-an-existing-deployment).
-- **Installed through the web installer:** there is currently no web upgrade
-  flow for existing instances. A GitHub change does not update your instance;
-  running the installer again creates a separate instance.
-- **Deployed from the command line:** follow the local update procedure in the
-  deployment guide, targeting the existing instance.
+- **Web installer:** the [English upgrade page](https://nscf.sidluo.com/upgrade/) and [Chinese upgrade page](https://ns.sidluo.com/sj/) are available for connecting the original account and choosing an instance. Check the available bundle version shown on the upgrade page before confirming.
+- **GitHub one-click deployments:** one-click upgrades are not currently supported.
 
-This GitHub push did not update the web installer's bundled release or existing
-user deployments automatically.
+The upgrade flow does not create databases or migrate old data. Unrecognized installations, mismatched migration versions or custom bindings need separate review. New installations still create separate instances. Daily database quotas and existing compatibility limits are unchanged.

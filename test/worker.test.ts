@@ -69,7 +69,7 @@ describe("official Nightscout UI assets", () => {
     expect(html).toContain('id="nscf-about"');
     expect(html).toContain('Upstream version <span class="version"></span>');
     expect(html).toContain("<strong>Nightscout for Cloudflare</strong>");
-    expect(html).toContain("Version <strong>1.1.1-beta</strong>");
+    expect(html).toContain("Version <strong>1.2</strong>");
     expect(html).toContain(
       'href="https://github.com/sid-luo/nightscout-for-cloudflare"',
     );

@@ -58,9 +58,8 @@ workflows use locked mock transports and do not prove public credentialed
 mutation by themselves; version 80's separate authenticated browser pass does
 cover the named Profile/Food/Admin/Reports workflows. This is not full-port
 evidence.
-The runtime code is deployed as Cloudflare version
-`339263b5-c3d5-400a-b3b3-0c6299722d32`; exact release
-evidence is recorded in `DEPLOYMENT.md`. The locked upstream has 111
+The historical runtime deployment used Cloudflare version
+`339263b5-c3d5-400a-b3b3-0c6299722d32`. The locked upstream has 111
 `*.test.js` files and a static declaration audit finds 883 active `it(...)`
 cases plus one skipped case. Those sets are not directly comparable.
 
@@ -166,8 +165,7 @@ The manifest is 16 `pass`, 86 `adapted`, seven `unresolved` and two fixed-scope
 exclusions. Version 81 passed remote API/Engine.IO/Pebble, provider-callback
 and real-browser test-data gates; the prior version 78
 passed the official Socket.IO-client/EIO4 and a
-clean-profile real-browser gate; earlier page/Settings/AR2 gates remain recorded
-as historical evidence in `DEPLOYMENT.md`.
+clean-profile real-browser gate. These are historical checks, not acceptance evidence for the latest release.
 
 ## Generated route and test inventory
 

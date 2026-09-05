@@ -8,8 +8,6 @@
 >
 > No GitHub. No command line. Deploy directly to your own Cloudflare account.
 
-Nickname: **The Instant Noodle Edition**
-
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
 
 This repository provides a fast and free way to deploy
@@ -18,7 +16,7 @@ It runs within Cloudflare's free-plan limits without a paid server or MongoDB
 service. It is an independent, unofficial port—not an official Nightscout
 release.
 
-Current Nightscout for Cloudflare release: **1.1.1-beta**
+Nightscout for Cloudflare version: **1.2.0**
 
 Upstream Nightscout version: **15.0.7**
 
@@ -27,14 +25,7 @@ translations and calculations, adding only the Cloudflare platform adapter.
 
 ## Why this project exists
 
-Nightscout is a great project. We used to be able to deploy it on Heroku for
-free, but that was a long time ago. Cloudflare, meanwhile, is something of a
-cyber philanthropist, but it does not support MongoDB.
-
-Nightscout has already provided excellent instant noodles, but without a fork
-or hot water (it used to have them). This project provides the fork and puts
-the hot water (Cloudflare) right in front of you. Just click a few times and,
-in the time it takes to make instant noodles, you can get a Nightscout.
+Nightscout is a great project. As a long-time user, I hope more people can deploy and use Nightscout easily, quickly and for free.
 
 ## What works today
 
@@ -43,12 +34,29 @@ in the time it takes to make instant noodles, you can get a Nightscout.
   pages work
 - The common read and write APIs used through v1, v2 and v3 are implemented
 
+## What is new in 1.2.0
+
+- Reduce repeated reads during AAPS sync to lower database usage.
+- Add Chinese and English web upgrade flows that preserve existing data, addresses, passwords and settings.
+- Improve upgrade messages and retries, and fix authorization navigation and instance discovery issues.
+
+See the [changelog](CHANGELOG.md) for detailed changes, test results and release availability.
+
 ## How to use
 
-Existing users: [recent changes](CHANGELOG.md) · [how to upgrade](docs/DEPLOYMENT.md#updating-an-existing-deployment). The upgrade path depends on how you installed; the web installer currently has no upgrade flow for existing instances.
+### 1. First installation
 
-- [Open the web installer](https://nscf.sidluo.com/)
-- [First-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
+- **Method 1: use the [web installer](https://nscf.sidluo.com/) (recommended).** Follow the on-screen instructions to complete installation.
+- **Method 2: use the one-click installer on GitHub.** See the [first-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started) for details.
+
+### 2. Upgrading
+
+Upgrades currently support only instances deployed with the **quick installer**. Open the [English upgrade page](https://nscf.sidluo.com/upgrade/), connect the original Cloudflare account, select your existing instance and confirm the upgrade.
+
+Upgrading preserves your data, address, password and settings. Do not use a new installation to upgrade: it creates a separate instance.
+
+Instances installed through GitHub one-click deployment do not currently support one-click upgrades.
+
 
 ## Nightscout and Nightscout for Cloudflare
 
@@ -57,7 +65,7 @@ Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
 - Nightscout upstream version: **15.0.7**
-- Nightscout for Cloudflare version: **1.1.1-beta**
+- Nightscout for Cloudflare version: **1.2.0**
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible
@@ -74,7 +82,6 @@ present.
 ## Technical documentation
 
 - [Configuration and advanced features](docs/CONFIGURATION.md)
-- [Deployment and first use](docs/DEPLOYMENT.md)
 - [Cloudflare architecture](docs/ARCHITECTURE.md)
 - [Upstream compatibility matrix](docs/UPSTREAM_COMPATIBILITY.md)
 

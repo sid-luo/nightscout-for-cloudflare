@@ -8,8 +8,6 @@
 >
 > 无需 GitHub，无需命令行，直接部署到你自己的 Cloudflare 账号。
 
-昵称：**Nightscout 泡面版**（The Instant Noodle Edition）
-
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
 
 这个仓库提供一种快速、免费的方式，把
@@ -17,7 +15,7 @@
 Cloudflare。它在 Cloudflare 免费套餐额度内运行，不需要付费服务器或
 MongoDB 服务。它是独立的非官方移植版，不是 Nightscout 官方发布。
 
-当前 Nightscout for Cloudflare 版本：**1.1.1-beta**
+Nightscout for Cloudflare 版本：**1.2.0**
 
 Nightscout 上游版本：**15.0.7**
 
@@ -26,12 +24,7 @@ Cloudflare 平台适配层。
 
 ## 为什么做这个项目
 
-Nightscout 是一个很伟大的项目，我们曾经可以在 Heroku 免费部署，那已经是
-很久以前的事情了。而 Cloudflare 堪称赛博大善人，但它并不支持 MongoDB。
-
-Nightscout 已经提供了非常好的泡面，但是没有叉子和开水（曾经有）。这个项目
-提供了一把叉子，并且把开水（Cloudflare）递到你面前。只需要点击几下，一个
-泡面的时间，你就可以得到一个 Nightscout。
+Nightscout 是一个伟大的项目。作为多年的用户，我希望更多人能简单、快速、免费地部署和使用 Nightscout。
 
 ## 现在已经能做什么
 
@@ -39,12 +32,29 @@ Nightscout 已经提供了非常好的泡面，但是没有叉子和开水（曾
 - 首页、血糖曲线、趋势箭头、状态信息和设置页面可以正常使用
 - v1、v2、v3 的常用读写 API 已经实现
 
+## 1.2.0 更新内容
+
+- 减少 AAPS 同步时的重复读取，降低数据库开销。
+- 新增中英文网页升级流程，保留原数据、地址、密码和设置。
+- 改善升级提示和失败重试，修复授权跳转与实例检查问题。
+
+详细变化、测试结果和发布进度见[更新日志](CHANGELOG.zh-CN.md)。
+
 ## 使用方法
 
-已有用户：[最近更新](CHANGELOG.zh-CN.md) · [如何升级](docs/DEPLOYMENT.zh-CN.md#更新已有部署)。升级方式取决于最初的安装方式；网页快速安装目前尚无升级已有实例的入口。
+### 一、首次安装
 
-- [打开快速安装器](https://ns.sidluo.com/)
-- [初次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
+- **方法一：使用[快速安装器](https://ns.sidluo.com/)（推荐）。** 按照页面提示完成安装。
+- **方法二：使用 GitHub 提供的一键安装。** 详情请参照[初次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)。
+
+### 二、升级
+
+目前仅支持通过**快速安装器**部署的实例升级。打开[升级页面](https://ns.sidluo.com/sj/)，连接原 Cloudflare 账号，选择已有实例并确认升级。
+
+升级保留原数据、地址、密码和设置。不要用“新安装”代替升级，新安装会创建另一个实例。
+
+通过 GitHub 一键部署的实例暂不支持一键升级。
+
 
 ## Nightscout 与 Nightscout for Cloudflare
 
@@ -52,7 +62,7 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 移植版本。Nightscout 上游版本和移植版本使用各自独立的版本号：
 
 - Nightscout 上游版本：**15.0.7**
-- Nightscout for Cloudflare 版本：**1.1.1-beta**
+- Nightscout for Cloudflare 版本：**1.2.0**
 
 原版 Admin Tools 的对应功能仍然保留，但本项目使用 SQLite Durable Objects
 存储数据，而不是 MongoDB。因此，页面中的部分名称会调整为与实际存储方式无关
@@ -68,7 +78,6 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 ## 技术文档
 
 - [配置与高级功能](docs/CONFIGURATION.zh-CN.md)
-- [部署与首次使用](docs/DEPLOYMENT.zh-CN.md)
 - [Cloudflare 架构](docs/ARCHITECTURE.md)
 - [上游兼容性矩阵](docs/UPSTREAM_COMPATIBILITY.md)
 

@@ -23,7 +23,7 @@ const projectPackage = JSON.parse(
   await readFile(path.join(projectRoot, "package.json"), "utf8"),
 );
 const projectUpdateGuide =
-  "https://github.com/sid-luo/nightscout-for-cloudflare/blob/main/docs/DEPLOYMENT.md#更新已有部署";
+  "https://github.com/sid-luo/nightscout-for-cloudflare/blob/main/README.md#2-upgrading";
 const socketClientPath = path.join(
   vendorRoot,
   "node_modules",
@@ -143,6 +143,13 @@ await cp(path.join(vendorRoot, "static"), publicRoot, { recursive: true });
 await cp(path.join(vendorRoot, "translations"), path.join(publicRoot, "translations"), {
   recursive: true,
 });
+// Locked Nightscout v15.0.7 requests sl_SL.json for Slovenian, while the
+// official Crowdin asset is named sl_SI.json. Keep the vendor snapshot intact
+// and publish a byte-identical compatibility alias for the upstream client.
+await cp(
+  path.join(publicRoot, "translations", "sl_SI.json"),
+  path.join(publicRoot, "translations", "sl_SL.json"),
+);
 await cp(upstreamBundleRoot, path.join(publicRoot, "bundle"), { recursive: true });
 
 const officialPages = [

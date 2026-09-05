@@ -205,7 +205,9 @@ describe("locked Engine.IO 3 WebSocket transport", () => {
     expect(await (await pendingPoll).text()).toBe("1:6");
 
     inbox.socket.send("5");
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    // Wait for the server to process the upgrade before inspecting persisted state.
+    inbox.socket.send("2");
+    expect(await inbox.nextString()).toBe("3");
     await runInDurableObject(stub, async (_instance, state) => {
       expect(new SqliteRealtimeSessionRepository(state.storage).requireSession(handshake.sid))
         .toMatchObject({
