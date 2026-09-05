@@ -46,6 +46,7 @@ import {
 import {
   durableObjectWriteQuotaRetryAfterSeconds,
   isDurableObjectWriteQuotaError,
+  isDurableObjectReadQuotaError,
 } from "./platform-errors";
 import { normalizePlatformAuthFailDelay } from "./status";
 import {
@@ -3662,7 +3663,7 @@ export default {
         }
         return json({ error: { code: error.code, message: error.message } }, { status: error.status });
       }
-      if (isDurableObjectWriteQuotaError(error)) {
+      if (isDurableObjectWriteQuotaError(error) || isDurableObjectReadQuotaError(error)) {
         if (url.pathname === "/socket.io" || url.pathname === "/socket.io/") {
           return storageQuotaEngineError();
         }
@@ -3671,8 +3672,11 @@ export default {
           json(
             {
               error: {
-                code: "storage_write_quota_exceeded",
-                message: "Storage writes are temporarily unavailable until the next daily reset",
+                code: isDurableObjectReadQuotaError(error)
+                  ? "storage_read_quota_exceeded" : "storage_write_quota_exceeded",
+                message: isDurableObjectReadQuotaError(error)
+                  ? "Storage reads are temporarily unavailable until the next daily reset"
+                  : "Storage writes are temporarily unavailable until the next daily reset",
               },
             },
             {

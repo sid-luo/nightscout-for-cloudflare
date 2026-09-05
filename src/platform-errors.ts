@@ -38,3 +38,9 @@ export function durableObjectWriteQuotaRetryAfterSeconds(
   const reset = durableObjectWriteQuotaResetAt(nowMs);
   return Math.max(1, Math.min(86_400, Math.ceil((reset - nowMs) / 1_000)));
 }
+
+/** Exact platform read-quota failure; keep it distinct from write-only mode. */
+export function isDurableObjectReadQuotaError(error: unknown): boolean {
+  return error instanceof Error
+    && /(?:^|:\s*)Exceeded allowed rows read in Durable Objects free tier\.?$/.test(error.message.trim());
+}

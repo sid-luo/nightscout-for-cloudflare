@@ -4,6 +4,7 @@ import {
   durableObjectWriteQuotaResetAt,
   durableObjectWriteQuotaRetryAfterSeconds,
   isDurableObjectWriteQuotaError,
+  isDurableObjectReadQuotaError,
 } from "../src/platform-errors";
 
 describe("Cloudflare platform error contracts", () => {
@@ -28,6 +29,20 @@ describe("Cloudflare platform error contracts", () => {
     )).toBe(false);
     expect(isDurableObjectWriteQuotaError(new Error("quota exceeded"))).toBe(false);
     expect(isDurableObjectWriteQuotaError("Exceeded allowed rows written")).toBe(false);
+  });
+
+  it("distinguishes read quota from write quota and unrelated failures", () => {
+    expect(isDurableObjectReadQuotaError(new Error(
+      "Exceeded allowed rows read in Durable Objects free tier.",
+    ))).toBe(true);
+    expect(isDurableObjectReadQuotaError(new Error(
+      "Error: Exceeded allowed rows read in Durable Objects free tier",
+    ))).toBe(true);
+    expect(isDurableObjectReadQuotaError(new DurableObjectWriteQuotaError())).toBe(false);
+    expect(isDurableObjectReadQuotaError(new Error("quota exceeded"))).toBe(false);
+    expect(isDurableObjectReadQuotaError(new Error(
+      "Exceeded allowed rows read in D1 free tier.",
+    ))).toBe(false);
   });
 
   it("calculates Retry-After to the next 00:00 UTC reset", () => {

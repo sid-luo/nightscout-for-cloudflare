@@ -1,3 +1,5 @@
+import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
+import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
 import { DurableObject } from "cloudflare:workers";
 import { SqliteAdminNotifyRepository } from "./admin-notifies";
 import {
@@ -47,6 +49,7 @@ import {
   durableObjectWriteQuotaResetAt,
   durableObjectWriteQuotaRetryAfterSeconds,
   isDurableObjectWriteQuotaError,
+  isDurableObjectReadQuotaError,
 } from "./platform-errors";
 import {
   type HistoryQuery,
@@ -773,6 +776,9 @@ class RealtimeJsonBudget {
 
 export class EntryStore extends DurableObject<EntryStoreEnv> {
   private readonly realtime: RealtimeSessionService;
+  private readonly realtimeEntryQueries = new RealtimeEntryQueryCache<DbDocument>();
+  private realtimeDeviceStatusQueries = new DeviceStatusQueryCache<DbDocument>();
+  private deviceStatusCacheMutation = false;
   private readonly activeWebSocketSessions = new Set<string>();
   private storageWriteQuotaBlockedUntil = 0;
   private storageSchemaInitializationPending = false;
@@ -827,6 +833,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private completeStorageInitialization(): void {
+    this.realtimeEntryQueries.clear();
+    this.realtimeDeviceStatusQueries.clear();
     // This method is intentionally synchronous. A request cannot observe a
     // half-repaired schema between quota reset and the activation seal.
     this.storageSchemaInitializationPending = false;
@@ -1861,9 +1869,67 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private documentRepository(): SqliteDocumentRepository {
     return new SqliteDocumentRepository(
       this.ctx.storage,
-      (event) => this.realtime.recordApi3StorageMutationInTransaction(event),
-      (collection) => this.recordDataMutationInTransaction(collection),
+      (event) => {
+        if (event.collection === "entries") this.realtimeEntryQueries.clear();
+        if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
+          this.realtimeDeviceStatusQueries.clear();
+        }
+        try {
+          this.realtime.recordApi3StorageMutationInTransaction(event);
+        } finally {
+          // A snapshot may have read uncommitted entries. Do not let those
+          // values survive a later rollback of the caller's transaction.
+          if (event.collection === "entries") this.realtimeEntryQueries.clear();
+          if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
+            this.realtimeDeviceStatusQueries.clear();
+          }
+        }
+      },
+      (collection, document) => {
+        if (collection === "devicestatus") {
+          this.updateDeviceStatusQueryCache(document);
+        }
+        this.recordDataMutationInTransaction(collection);
+      },
     );
+  }
+
+  private updateDeviceStatusQueryCache(document?: JsonDocument): void {
+    if (!this.deviceStatusCacheMutation || document === undefined) {
+      this.realtimeDeviceStatusQueries.clear();
+      return;
+    }
+    if (!this.realtimeDeviceStatusQueries.ready) return;
+    // Read canonical storage metadata, including updated_at, instead of
+    // guessing ordering from the public API3 document's timestamps.
+    const identity = document.identifier;
+    if (typeof identity !== "string") {
+      this.realtimeDeviceStatusQueries.clear();
+      return;
+    }
+    const rows = this.ctx.storage.sql.exec<DbDocument>(
+      `SELECT id, body, sort_time, updated_at FROM documents
+       WHERE collection = 'devicestatus' AND identifier = ? LIMIT 2`, identity,
+    ).toArray();
+    if (rows.length !== 1) this.realtimeDeviceStatusQueries.clear();
+    else this.realtimeDeviceStatusQueries.upsert(rows[0]!);
+  }
+
+  private withDeviceStatusCacheMutation<T>(collection: string, operation: () => T): T {
+    if (collection !== "devicestatus") return operation();
+    // Repository operations are synchronous and own their SQLite transaction.
+    // Only publish the fork after that transaction returns successfully.
+    const committed = this.realtimeDeviceStatusQueries;
+    this.realtimeDeviceStatusQueries = committed.fork();
+    this.deviceStatusCacheMutation = true;
+    try {
+      return operation();
+    } catch (error) {
+      this.realtimeDeviceStatusQueries = committed;
+      throw error;
+    } finally {
+      this.deviceStatusCacheMutation = false;
+    }
   }
 
   private backgroundTasks(): SqliteBackgroundTaskRepository {
@@ -2012,6 +2078,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private recordDataMutationInTransaction(collection: string): void {
+    if (collection === "entries") this.realtimeEntryQueries.clear();
     const tasks = this.backgroundTasks();
     const now = Date.now();
     const runtime = this.resolvedAutomaticNotificationRuntime(now);
@@ -2908,6 +2975,13 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     ));
   }
 
+  private cachedRealtimeEntries(now: number, frame: boolean, sql: string): Iterable<DbDocument> {
+    const lower = now - REALTIME_ENTRY_WINDOW_MS;
+    return this.realtimeEntryQueries.read(sql, lower, frame, () =>
+      this.ctx.storage.sql.exec<DbDocument>(sql, ...(frame ? [lower, now] : [lower])),
+    );
+  }
+
   private realtimeSnapshot(
     now: number,
     frame = false,
@@ -2931,10 +3005,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     // materialized with toArray() before accounting.
     let budget = new RealtimeJsonBudget(snapshot);
     const entryUpperClause = frame ? "AND sort_time <= ?" : "";
-    const entryWindowBindings: SqlStorageValue[] = frame
-      ? [now - REALTIME_ENTRY_WINDOW_MS, now]
-      : [now - REALTIME_ENTRY_WINDOW_MS];
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
+    for (const row of this.cachedRealtimeEntries(now, frame,
       `SELECT id, body, sort_time
        FROM documents
        WHERE collection = 'entries'
@@ -2944,7 +3015,6 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
          AND NOT ${realtimeJsonTruthySql("$.mbg")}
        ORDER BY sort_time DESC, id ASC
        LIMIT 1000`,
-      ...entryWindowBindings,
     )) {
       const entry = toPublicEntry(toDocument(row));
       const raw = entry as PublicEntry & Record<string, unknown>;
@@ -3002,7 +3072,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       snapshot.sgvs.length + snapshot.profiles.length + snapshot.devicestatus.length,
     );
 
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
+    for (const row of this.cachedRealtimeEntries(now, frame,
       `SELECT id, body, sort_time
        FROM documents
        WHERE collection = 'entries'
@@ -3013,7 +3083,6 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
          AND NOT ${realtimeJsonTruthySql("$.sgv")}
        ORDER BY sort_time DESC, id ASC
        LIMIT 1000`,
-      ...entryWindowBindings,
     )) {
       const entry = toPublicEntry(toDocument(row)) as PublicEntry & Record<string, unknown>;
       if (entry.mbg || entry.sgv) continue;
@@ -3030,7 +3099,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     }
     snapshot.cals.reverse();
 
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
+    for (const row of this.cachedRealtimeEntries(now, frame,
       `SELECT id, body, sort_time
        FROM documents
        WHERE collection = 'entries'
@@ -3039,7 +3108,6 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
          AND ${realtimeNumericMeasurementSql("$.mbg")}
        ORDER BY sort_time DESC, id ASC
        LIMIT 1000`,
-      ...entryWindowBindings,
     )) {
       const entry = toPublicEntry(toDocument(row));
       const mgdl = realtimeMeasurement(entry.mbg);
@@ -3397,9 +3465,10 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     bindings: SqlStorageValue[],
     budget: RealtimeJsonBudget,
     normalize: (document: RealtimeDocument) => RealtimeDocument,
+    rows?: Iterable<DbDocument>,
   ): RealtimeDocument[] {
     const documents: RealtimeDocument[] = [];
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(statement, ...bindings)) {
+    for (const row of rows ?? this.ctx.storage.sql.exec<DbDocument>(statement, ...bindings)) {
       if (!realtimeStoredBodyAllowed(row.body)) break;
       let parsed: RealtimeDocument;
       try {
@@ -3425,19 +3494,18 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     budget: RealtimeJsonBudget,
     frame = false,
   ): RealtimeDocument[] {
-    const upperClause = frame ? "AND sort_time <= ?" : "";
-    return this.realtimeDocuments(
-      `SELECT id, body, sort_time
+    const lower = now - REALTIME_DEVICE_STATUS_WINDOW_MS;
+    const statement = `SELECT id, body, sort_time, updated_at
        FROM documents
        WHERE collection = 'devicestatus'
          AND sort_time >= ?
-         ${upperClause}
-       ORDER BY sort_time DESC, updated_at DESC`,
-      frame
-        ? [now - REALTIME_DEVICE_STATUS_WINDOW_MS, now]
-        : [now - REALTIME_DEVICE_STATUS_WINDOW_MS],
-      budget,
+         ${frame ? "AND sort_time <= ?" : ""}
+       ORDER BY sort_time DESC, updated_at DESC`;
+    const bindings = frame ? [lower, now] : [lower];
+    return this.realtimeDocuments(statement, bindings, budget,
       normalizeRealtimeDeviceStatus,
+      this.realtimeDeviceStatusQueries.read(lower, frame, () =>
+        this.ctx.storage.sql.exec<DbDocument>(statement, ...bindings)),
     );
   }
 
@@ -4326,7 +4394,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     try {
       return JSON.stringify({ ok: true, result: await this.putEntries(entries) });
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       // Keep an expected Mongo-compatible ordered-batch failure inside the DO
       // RPC boundary. The HTTP adapter emits the locked public envelope while
       // the successful SQLite prefix remains committed.
@@ -4681,7 +4749,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         ),
       };
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       // Keep expected storage/normalization failures inside the RPC boundary;
       // the HTTP adapter emits the public legacy error without an unhandled DO
       // rejection or leaking internal SQLite details.
@@ -4963,6 +5031,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         result: this.documentRepository().queryDocumentsForApi3(collection, query),
       });
     } catch (error) {
+      if (isDurableObjectReadQuotaError(error)) throw error;
       return JSON.stringify({
         ok: false,
         message: error instanceof Error ? error.message : String(error),
@@ -4984,10 +5053,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.documentRepository().createDocumentForApi3(collection, document, options),
+        this.withDeviceStatusCacheMutation(collection, () =>
+          this.documentRepository().createDocumentForApi3(collection, document, options)),
       );
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       result = JSON.stringify({
         ok: false,
         reason: "operation-error",
@@ -5018,7 +5088,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         ),
       );
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       result = JSON.stringify({
         ok: false,
         reason: "operation-error",
@@ -5049,7 +5119,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         ),
       );
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       result = JSON.stringify({
         ok: false,
         reason: "operation-error",
@@ -5076,7 +5146,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         actor,
       );
     } catch (error) {
-      if (this.enterStorageWriteQuotaMode(error)) throw error;
+      if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
       // Keep application-level validation failures inside the typed DO RPC
       // contract. Letting a known read-only rejection escape the Durable
       // Object produces an uncaught RPC exception even when the outer Worker
