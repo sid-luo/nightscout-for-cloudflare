@@ -80,6 +80,18 @@ Cloudflare documentation:
 
 ## Updating an existing deployment
 
+Check the [changelog](../CHANGELOG.md), then identify your original installation
+method. Updating the GitHub source does not automatically upgrade every user's
+instance.
+
+| Original installation method | Current upgrade path |
+| --- | --- |
+| Deploy to Cloudflare button on GitHub | Eligible source deployments can rebuild as described below |
+| Web installer | No existing-instance upgrade flow yet; installing again creates a new instance |
+| Local Git/Wrangler deployment | Follow the local update procedure near the end of this guide |
+
+### Instances installed using the Deploy to Cloudflare button
+
 The Deploy to Cloudflare button creates an independent Git repository in your
 account, not a GitHub fork. It therefore has no `Sync fork` button, and GitHub
 Actions update workflows from this project are not retained during import.
@@ -111,6 +123,18 @@ builds may ignore those custom commits.
 Copies created before this build updater was introduced require one final
 redeployment or a manual bootstrap. Once the updater is present,
 **Retry build** is the normal update path.
+
+### Instances installed using the web installer
+
+The web installer uploads a release bundle directly, without the Git source-build
+workflow above. The **Retry build** procedure therefore does not apply to these
+installations. The installer currently creates new instances and has no flow for
+upgrading an existing one.
+
+Running it again creates a separate instance: it does not upgrade the original
+Worker or migrate its database. Keep the existing instance and data. Availability
+and instructions for a future web upgrade flow will be documented in the
+[changelog](../CHANGELOG.md).
 
 ## First launch
 

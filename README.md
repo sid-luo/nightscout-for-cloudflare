@@ -45,6 +45,8 @@ in the time it takes to make instant noodles, you can get a Nightscout.
 
 ## How to use
 
+Existing users: [recent changes](CHANGELOG.md) · [how to upgrade](docs/DEPLOYMENT.md#updating-an-existing-deployment). The upgrade path depends on how you installed; the web installer currently has no upgrade flow for existing instances.
+
 - [Open the web installer](https://nscf.sidluo.com/)
 - [First-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
 

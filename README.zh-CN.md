@@ -41,6 +41,8 @@ Nightscout 已经提供了非常好的泡面，但是没有叉子和开水（曾
 
 ## 使用方法
 
+已有用户：[最近更新](CHANGELOG.zh-CN.md) · [如何升级](docs/DEPLOYMENT.zh-CN.md#更新已有部署)。升级方式取决于最初的安装方式；网页快速安装目前尚无升级已有实例的入口。
+
 - [打开快速安装器](https://ns.sidluo.com/)
 - [初次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)
 
