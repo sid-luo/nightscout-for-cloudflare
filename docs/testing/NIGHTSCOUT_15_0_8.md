@@ -1,7 +1,8 @@
-# Nightscout 15.0.8 testing track
+# NSCF 1.3 beta — based on Nightscout 15.0.8
 
 NSCF version: **1.3.0-beta.1**. Development branch:
-[`codex/nightscout-15.0.8-beta`](https://github.com/sid-luo/nightscout-for-cloudflare/tree/codex/nightscout-15.0.8-beta).
+[`ns-15.0.8/ns4cf-1.3-beta`](https://github.com/sid-luo/nightscout-for-cloudflare/tree/ns-15.0.8/ns4cf-1.3-beta).
+Beta refers to the NSCF adaptation; official Nightscout 15.0.8 is a stable upstream release.
 This is an independent testing track from stable NSCF 1.2.0. No stable Release,
 production deployment or installer publication is part of this work.
 
@@ -96,7 +97,7 @@ If using Pages, also use a separate Pages project and bindings. Do not attach
 production `script_name` bindings, production routes or production custom domains.
 
 ```sh
-git clone --branch codex/nightscout-15.0.8-beta --single-branch \
+git clone --branch ns-15.0.8/ns4cf-1.3-beta --single-branch \
   https://github.com/sid-luo/nightscout-for-cloudflare.git nscf-beta
 cd nscf-beta
 npm ci
