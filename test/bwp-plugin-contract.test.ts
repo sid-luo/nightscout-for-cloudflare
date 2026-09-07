@@ -273,3 +273,27 @@ describe("Workers BWP platform adaptation", () => {
     expect(nightscoutStatus(new Date(now)).extendedSettings).not.toHaveProperty("bwp");
   });
 });
+
+
+describe("Nightscout 15.0.8 BWP alarm regression", () => {
+  it.each([0, -1, undefined])("does not snooze a high alarm with IOB %s", (iob) => {
+    const result = calculateBwpNotificationEvaluation(
+      { effect: 0, outcome: 180, bolusEstimate: 0, scaledSGV: 180, iob },
+      profile({ dia: 3, sens: 90, target_high: 200, target_low: 100 }),
+      [{ mgdl: 180, mills: now }], now, settings,
+    );
+    expect(result.snoozes).toEqual([]);
+  });
+
+  it("does not emit or snooze alarms from an incomplete calculation", () => {
+    for (const bolusEstimate of [0, 5]) {
+      const result = calculateBwpNotificationEvaluation(
+        { effect: 0, outcome: 300, bolusEstimate, scaledSGV: 300, iob: 1,
+          errors: ["Data isn't current"] },
+        profile({ dia: 3, sens: 90, target_high: 120, target_low: 100 }),
+        [{ mgdl: 300, mills: now }], now, settings,
+      );
+      expect(result).toEqual({ notifications: [], snoozes: [] });
+    }
+  });
+});

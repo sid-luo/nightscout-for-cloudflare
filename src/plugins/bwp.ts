@@ -231,7 +231,8 @@ export function calculateBwpNotificationEvaluation(
   properties: Record<string, unknown> = {},
 ): BwpNotificationEvaluation {
   const result: BwpNotificationEvaluation = { notifications: [], snoozes: [] };
-  if (property === undefined) return result;
+  if (property === undefined
+    || (Array.isArray(property.errors) && property.errors.length > 0)) return result;
   const snoozeBwp = Number(preferences.snooze) || 0.10;
   const warnBwp = Number(preferences.warn) || 0.50;
   const urgentBwp = Number(preferences.urgent) || 1;
@@ -242,7 +243,7 @@ export function calculateBwpNotificationEvaluation(
   const high = record(properties.ar2)?.eventType === "high"
     || Number(property.scaledSGV) >= scaleMgdl(thresholds.bgTargetTop, settings);
 
-  if (high && Number(property.bolusEstimate) < snoozeBwp) {
+  if (high && Number(property.iob) > 0 && Number(property.bolusEstimate) < snoozeBwp) {
     result.snoozes.push({
       level: URGENT,
       title: "Snoozing high alarm since there is enough IOB",
