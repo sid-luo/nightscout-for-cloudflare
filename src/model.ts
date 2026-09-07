@@ -1,3 +1,4 @@
+import { sanitizeStoredDocument } from "./storage-purifier";
 import {
   LEGACY_QUERY_DEFAULT_WINDOW_MS,
   LegacyObjectId,
@@ -251,40 +252,10 @@ export function parseEntryPayload(value: unknown): ValidatedEntry[] {
   return values.map(validateEntry);
 }
 
-function escapeLegacyHtml(value: string): string {
-  return value
-    // Preserve existing named/numeric entities so a read-then-reupload cycle
-    // is idempotent instead of growing `&amp;` into `&amp;amp;` each time.
-    .replace(/&(?!(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);)/gi, "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function sanitizeLegacyValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeLegacyValue);
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, sanitizeLegacyValue(item)]),
-    );
-  }
-  // Locked purifier applies DOMPurify only to nonnumeric leaves. Workers has
-  // no JSDOM document; idempotent entity-encoding of markup-like nonnumeric
-  // strings is a bounded, fail-closed adaptation that cannot persist active
-  // markup while preserving entities already returned to an uploader.
-  if (
-    typeof value === "string"
-    && Number.isNaN(Number(value))
-    && /[<&]/.test(value)
-  ) {
-    return escapeLegacyHtml(value);
-  }
-  return value;
-}
-
 export function legacyEntryPreview(value: unknown): unknown[] {
-  const sanitized = sanitizeLegacyValue(value);
+  const sanitized = Array.isArray(value)
+    ? value.map((item) => isRecord(item) ? sanitizeStoredDocument(item) : item)
+    : isRecord(value) ? sanitizeStoredDocument(value) : value;
   if (Array.isArray(sanitized)) return sanitized;
   if (isRecord(sanitized) && Object.prototype.hasOwnProperty.call(sanitized, "date")) {
     return [sanitized];

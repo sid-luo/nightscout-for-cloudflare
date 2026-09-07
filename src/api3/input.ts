@@ -1,3 +1,4 @@
+import { sanitizeStoredDocument } from "../storage-purifier";
 import type { DocumentFilter, DocumentSort } from "../document-repository";
 import type { JsonDocument, JsonValue } from "../entry-store";
 import { compileMongoRegexToSqlGlob, SafeRegexError } from "../safe-regex";
@@ -379,7 +380,12 @@ export function parseApi3Document(value: unknown): JsonDocument {
     throw new Api3InputError(400, API3_MESSAGES.badBody);
   }
   assertJson(value);
-  return { ...(value as JsonDocument) };
+  try {
+    return sanitizeStoredDocument(value as JsonDocument);
+  } catch (error) {
+    if (error instanceof RangeError) throw new Api3InputError(400, error.message);
+    throw error;
+  }
 }
 
 export function normalizeApi3Date(document: JsonDocument): void {

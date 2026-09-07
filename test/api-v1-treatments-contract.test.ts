@@ -209,7 +209,7 @@ describe("complete locked v1 Treatments upload and identity contract", () => {
       carbs: 30,
       insulin: 2,
       glucose: 100,
-      notes: "<img>",
+      notes: "<img />",
     });
     expect(created[0]).not.toHaveProperty("eventTime");
   });

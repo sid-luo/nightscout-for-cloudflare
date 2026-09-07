@@ -357,9 +357,9 @@ describe("API v1/v2 Entries uploader and read contract", () => {
     const previewRows = await preview.json<JsonObject[]>();
     expect(previewRows).toMatchObject([{
       identifier: "preview-dangerous",
-      notes: "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;",
+      notes: '<img src="x" />',
       nested: {
-        label: "Tom &amp; Jerry &lt;script&gt;alert(1)&lt;/script&gt;",
+        label: "Tom &amp; Jerry ",
       },
     }]);
     const replayPreview = await post(
@@ -372,9 +372,9 @@ describe("API v1/v2 Entries uploader and read contract", () => {
       "/api/v1/entries/preview",
     );
     expect(await replayPreview.json()).toMatchObject([{
-      notes: "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;",
+      notes: '<img src="x" />',
       nested: {
-        label: "Tom &amp; Jerry &lt;script&gt;alert(1)&lt;/script&gt;",
+        label: "Tom &amp; Jerry ",
       },
     }]);
     expect(await (
@@ -390,7 +390,7 @@ describe("API v1/v2 Entries uploader and read contract", () => {
     expect(written.status).toBe(200);
     const writtenRows = await written.json<JsonObject[]>();
     expect(writtenRows[0]).toMatchObject({
-      notes: "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;",
+      notes: '<img src="x" />',
     });
     expect(writtenRows[1]?.date).toEqual(expect.any(Number));
     expect(writtenRows[1]).toMatchObject({ sgv: 101, direction: "SIDEWAYS" });

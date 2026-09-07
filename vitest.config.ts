@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
@@ -7,6 +8,14 @@ const TEST_API_SECRET = "nscf-test-secret-20260717";
 (process.env as Record<string, string | undefined>).API_SECRET ??= TEST_API_SECRET;
 
 export default defineConfig({
+  // Match PostCSS require() resolution: the Workers test runner otherwise
+  // selects nanoid's ESM export and source-map-js's empty browser export.
+  resolve: {
+    alias: {
+      "nanoid/non-secure": createRequire(import.meta.url).resolve("nanoid/non-secure"),
+      "source-map-js": createRequire(import.meta.url).resolve("source-map-js"),
+    },
+  },
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },

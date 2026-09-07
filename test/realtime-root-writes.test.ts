@@ -261,7 +261,7 @@ describe("locked websocket.js root mutation adapter", () => {
     });
     const [defaultedDocument] = acknowledgementDocuments(defaulted.acknowledgement);
     expect(defaultedDocument).toMatchObject({
-      eventType: "<none>",
+      eventType: "", // 15.0.8 storage purification removes the synthetic tag.
       created_at: expect.any(String),
     });
 
@@ -509,5 +509,31 @@ describe("locked websocket.js root mutation adapter", () => {
     expect(acknowledgementDocuments(activity.acknowledgement)[0])
       .toMatchObject({ _id: "activity-custom-id", type: "walking", duration: 30 });
     expect(await storedDocuments(name, "activity")).toHaveLength(1);
+  });
+});
+
+describe("15.0.8 realtime stored text protection", () => {
+  it("cleans dbAdd acknowledgements, dbUpdate persistence and nested values", async () => {
+    const name = tenant('xss-realtime');
+    const socket = await openPollingSocket(name);
+    const payload = '<script>alert(1)</script><img src=x onerror=alert(2)>';
+    const added = await socket.write('dbAdd', { collection: 'food',
+      data: { name: payload, nested: { notes: payload } } });
+    const [document] = acknowledgementDocuments(added.acknowledgement);
+    expect(document?.name).toBe('<img src="x" />');
+    await socket.write('dbUpdate', { collection: 'food', _id: document?._id,
+      data: { name: payload, 'nested.notes': payload } });
+    const [stored] = await storedDocuments(name, 'food');
+    expect(stored?.name).toBe('<img src="x" />');
+    expect(stored?.nested).toEqual({ notes: '<img src="x" />' });
+  });
+});
+
+describe("15.0.8 realtime batch preflight", () => {
+  it("rejects the whole batch before committing its valid prefix", async () => {
+    const name = tenant('invalid-batch-preflight');
+    const socket = await openPollingSocket(name);
+    await socket.write('dbAdd', { collection: 'food', data: [{ name: 'valid' }, null] });
+    expect(await storedDocuments(name, 'food')).toEqual([]);
   });
 });

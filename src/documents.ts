@@ -1,3 +1,4 @@
+import { sanitizeStoredDocument } from "./storage-purifier";
 import type { DocumentCollection, JsonDocument } from "./entry-store";
 import type { DocumentFilter, DocumentQuery } from "./document-repository";
 import { ApiError } from "./model";
@@ -13,16 +14,6 @@ const MAX_STRING_LENGTH = 64 * 1024;
 const SQLITE_MAX_BINDINGS = 100;
 const FOUR_DAYS_MS = 4 * 24 * 60 * 60 * 1000;
 const TREATMENT_NUMERIC_QUERY_FIELDS = new Set(["insulin", "carbs", "glucose"]);
-const LEGACY_SAFE_HTML_TAGS = new Set([
-  "a", "abbr", "b", "blockquote", "br", "code", "dd", "del", "div", "dl", "dt",
-  "em", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "img", "ins", "kbd",
-  "li", "ol", "p", "pre", "s", "samp", "small", "span", "strike", "strong",
-  "sub", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "tt", "u",
-  "ul", "var",
-]);
-const LEGACY_VOID_HTML_TAGS = new Set(["br", "hr", "img"]);
-const LEGACY_FORBIDDEN_HTML_BLOCK = /<(script|style|iframe|object|embed|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const LEGACY_HTML_TAG = /<\s*(\/?)\s*([a-z][a-z0-9-]*)(?:\s[^<>]*?)?\/?\s*>/gi;
 const LEGACY_PREDICTION_TYPES = ["IOB", "COB", "UAM", "ZT"] as const;
 export const LEGACY_DEFAULT_PREDICTIONS_MAX_SIZE = 288;
 
@@ -123,54 +114,14 @@ export function normalizeLegacyDeviceStatusDocument(
   };
 }
 
-function escapeLegacyTextAngles(value: string): string {
-  return value.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-/**
- * Workers has no browser DOM for upstream JSDOM + DOMPurify. This bounded
- * fail-closed adapter preserves a reviewed safe tag set, strips every HTML
- * attribute (including event handlers and javascript: URLs), removes active
- * element blocks, and escapes unmatched angle brackets. It intentionally
- * matches the locked treatment fixture's dangerous IMG result (`<img>`) while
- * remaining stricter than DOMPurify for otherwise-safe attributes.
- */
-function sanitizeLegacyHtml(value: string): string {
-  const source = value.replace(LEGACY_FORBIDDEN_HTML_BLOCK, "");
-  let output = "";
-  let cursor = 0;
-  LEGACY_HTML_TAG.lastIndex = 0;
-  for (let match = LEGACY_HTML_TAG.exec(source); match !== null; match = LEGACY_HTML_TAG.exec(source)) {
-    output += escapeLegacyTextAngles(source.slice(cursor, match.index));
-    const closing = match[1] === "/";
-    const tag = match[2]!.toLowerCase();
-    if (LEGACY_SAFE_HTML_TAGS.has(tag) && !(closing && LEGACY_VOID_HTML_TAGS.has(tag))) {
-      output += closing ? `</${tag}>` : `<${tag}>`;
-    }
-    cursor = match.index + match[0].length;
-  }
-  return output + escapeLegacyTextAngles(source.slice(cursor));
-}
-
-/** Mirrors upstream purifier recursion for the legacy Treatments POST path. */
+/** Shared v15.0.8 purifier; retained name for the legacy POST adapter. */
 export function sanitizeLegacyTreatmentDocument(input: JsonDocument): JsonDocument {
-  function sanitize(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(sanitize);
-    if (typeof value === "object" && value !== null) {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, sanitize(item)]),
-      );
-    }
-    if (
-      typeof value === "string"
-      && Number.isNaN(Number(value))
-      && /[<>]/.test(value)
-    ) {
-      return sanitizeLegacyHtml(value);
-    }
-    return value;
+  try {
+    return sanitizeStoredDocument(input);
+  } catch (error) {
+    if (error instanceof RangeError) throw new ApiError(400, "invalid_document", error.message);
+    throw error;
   }
-  return sanitize(input) as JsonDocument;
 }
 
 function assertJsonValue(value: unknown, depth = 0): void {
@@ -254,7 +205,7 @@ export function parseDocumentPayload(
     throw new ApiError(400, "invalid_batch", `batch must contain 1-${MAX_DOCUMENTS} documents`);
   }
   return {
-    documents: values.map((item) => normalizeDocument(item, collection, requireId)),
+    documents: values.map((item) => sanitizeLegacyTreatmentDocument(normalizeDocument(item, collection, requireId))),
     inputWasArray,
   };
 }

@@ -1,3 +1,4 @@
+import { sanitizeStoredDocument } from "./storage-purifier";
 import type { JsonDocument, JsonValue } from "./entry-store";
 import { LEGACY_ENTRY_DEFAULT_WINDOW_MS } from "./model";
 import type { HistoryQuery, ValidatedEntry } from "./model";
@@ -400,7 +401,7 @@ function normalizeTreatmentIdentity(
   document: JsonDocument,
   uuidHandling = true,
 ): JsonDocument {
-  const normalized = { ...document };
+  const normalized = sanitizeStoredDocument(document);
   if (typeof normalized._id === "string" && !OBJECT_ID.test(normalized._id)) {
     if (uuidHandling && requestedIdentifier(normalized) === null) {
       normalized.identifier = normalized._id;
@@ -2250,6 +2251,9 @@ export class SqliteDocumentRepository {
     if (policy === "api3" && collection === "activity") {
       throw new Error("activity is not an API3 collection");
     }
+    // Final boundary also protects internal/importer writes and old values
+    // retained by PATCH before publishing the canonical snapshot.
+    document = sanitizeStoredDocument(document);
     const api3Collection = collection as Api3CollectionName;
     const revision = (existing?.revision ?? 0) + 1;
     const identity = identifierMetadata(document);
@@ -2866,7 +2870,7 @@ export class SqliteDocumentRepository {
     receivedAt: number,
   ): WebsocketRootAddResult {
     return this.storage.transactionSync(() => {
-      const document = structuredClone(input);
+      const document = sanitizeStoredDocument(input);
       if (!hasOwn(document, "created_at")) {
         document.created_at = new Date(receivedAt).toISOString();
       }
@@ -2952,7 +2956,7 @@ export class SqliteDocumentRepository {
       if (storageId === null) return false;
       const existing = this.findByIdRow(storageId, collection);
       if (existing === undefined) return false;
-      const updated = websocketSetFields(materializeLegacy(existing), fields);
+      const updated = websocketSetFields(materializeLegacy(existing), sanitizeStoredDocument(fields));
       this.writeSnapshot(
         existing.id,
         updated,
@@ -3276,6 +3280,7 @@ export class SqliteDocumentRepository {
       if (this.preconditionFailed(existing, options.ifUnmodifiedSince, collection)) {
         return { ok: false, reason: "precondition-failed" };
       }
+      patch = sanitizeStoredDocument(patch);
       this.assertApi3ImmutableFields(existing, patch, false, true, collection);
       if (options.validate !== false) assertApi3Common(patch, true);
       const original = materializeLegacy(existing);

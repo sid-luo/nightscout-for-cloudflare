@@ -1,3 +1,4 @@
+import { sanitizeStoredDocument } from "./storage-purifier";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
 import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
 import { DurableObject } from "cloudflare:workers";
@@ -3740,15 +3741,21 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         return { acknowledgement: [], changed: false };
       }
 
+      // v15.0.8 validates and purifies the entire batch before any write.
+      // Preserve item-local database failure semantics after this preflight.
+      const prepared: JsonDocument[] = [];
+      try {
+        for (const value of values) {
+          const document = realtimeRootWriteDocument(value);
+          if (document === null) return { acknowledgement: [], changed: false };
+          prepared.push(sanitizeStoredDocument(document));
+        }
+      } catch {
+        return { acknowledgement: [], changed: false };
+      }
       const documents: JsonDocument[] = [];
       let changed = false;
-      for (const value of values) {
-        const document = realtimeRootWriteDocument(value);
-        if (document === null) {
-          // processSingleDbAdd rejects malformed values. The locked array
-          // wrapper reports [] even if an earlier sequential item committed.
-          return { acknowledgement: [], changed };
-        }
+      for (const document of prepared) {
         try {
           const result = repository.addWebsocketRootDocument(
             request.collection,
@@ -4614,6 +4621,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     documentsJson: string,
   ): Promise<string> {
     let documents = JSON.parse(documentsJson) as JsonDocument[];
+    if (collection !== "subjects" && collection !== "roles") {
+      documents = documents.map(sanitizeStoredDocument);
+    }
     if (collection === "treatments") {
       const result = await this.createLegacyTreatments(documentsJson);
       if (!result.ok) throw new Error(result.error);
@@ -4773,6 +4783,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     documentsJson: string,
   ): Promise<string> {
     let documents = JSON.parse(documentsJson) as JsonDocument[];
+    if (collection !== "subjects" && collection !== "roles") {
+      documents = documents.map(sanitizeStoredDocument);
+    }
     if (collection === "treatments") {
       return this.saveLegacyTreatmentsWithUuidHandling(documentsJson, true);
     }
