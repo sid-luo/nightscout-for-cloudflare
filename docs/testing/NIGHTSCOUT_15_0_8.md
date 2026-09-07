@@ -112,9 +112,18 @@ choose a unique Worker name, and set a separate `API_SECRET`. Keep the same
 **test** name/data space for later beta commits so testing data persists. The
 ordinary installer and README one-click links still deliver the stable track.
 
-A Cloudflare test account has not yet been selected, so there is no deployed
-15.0.8 test URL. A prebuilt installer-compatible package has been prepared
-locally, outside the production installer's asset directories. No production
-resources or stable GitHub Release have been changed.
+An independent maintainer test instance was deployed on 2026-09-08:
+https://nscf-nightscout-beta.qwjklqw2182j.workers.dev/ . It runs the verified
+1.3.0-beta.1 prebuilt package from this branch (source commit `47ad24a`),
+with its own Worker, SQLite Durable Object namespaces and API secret.
+Anonymous data reads and writes are denied. The test credential is delivered
+privately, never committed here. Initial Profile setup and real-client
+acceptance remain the maintainer's next steps.
+
+The deployment uses a pinned prebuilt package through Wrangler; no automatic
+Git push deployment is configured. Subsequent verified beta packages should
+update this same test Worker so its URL and test data persist.
+`NSCF_AUTO_UPDATE=0` and source branch/commit markers are recorded on the
+test Worker. No production resources or stable GitHub Release have changed.
 
 Official source: [15.0.8 release](https://github.com/nightscout/cgm-remote-monitor/releases/tag/v15.0.8).
