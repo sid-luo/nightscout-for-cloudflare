@@ -1,5 +1,5 @@
 /*
- * Cloudflare transport boundary for the official Socket.IO 4.5.4 client.
+ * Cloudflare transport boundary for the official Socket.IO 4.8.3 client.
  *
  * Nightscout normally has one database per deployment, so its browser client
  * does not add NSCF's optional test-tenant selector to Engine.IO requests.

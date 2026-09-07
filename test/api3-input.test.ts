@@ -1,3 +1,5 @@
+import { handleApi3Treatments } from "../src/api3/treatments";
+import type { EntryStore } from "../src/entry-store";
 import { describe, expect, it } from "vitest";
 import {
   API3_MESSAGES,
@@ -261,4 +263,53 @@ describe("API3 response renderer", () => {
       + "</item>\n",
     );
   });
+});
+
+
+describe("15.0.8 OpenAPI filter_parameters", () => {
+  it.each(['filter_parameters', 'filter_parameters[]'])("expands repeated %s while preserving spaces and equals in values", (name) => {
+    const url = new URL('https://example.test/api/v3/treatments');
+    url.searchParams.append(name, 'carbs$gte=10 eventType$eq=Meal Bolus');
+    url.searchParams.append(name, 'notes$eq=a=b c');
+    expect(parseApi3Search(url).filters).toEqual([
+      { field: 'carbs', operator: 'gte', value: 10 },
+      { field: 'eventType', operator: 'eq', value: 'Meal Bolus' },
+      { field: 'notes', operator: 'eq', value: 'a=b c' },
+    ]);
+  });
+  it("keeps the last condition and rejects unsafe field paths", () => {
+    const url = new URL('https://example.test/api/v3/entries?sgv$gt=10');
+    url.searchParams.append('filter_parameters', 'sgv$gt=20');
+    expect(parseApi3Search(url).filters).toEqual([{ field: 'sgv', operator: 'gt', value: 20 }]);
+    url.searchParams.append('filter_parameters', 'a..b$eq=3');
+    expect(() => parseApi3Search(url)).toThrow(/Invalid filter field/);
+  });
+});
+
+
+it("encodes XML field names, preserves underscore fields and resolves encoded-name collisions", async () => {
+  const unsafe = 'unsafe:name';
+  const encoded = '_encoded_dW5zYWZlOm5hbWU';
+  const xml = await renderApi3("xml", {
+    _metadata: 'untrusted metadata',
+    outer: [{ ['field><unexpected>extra</unexpected><field/']: '<markup remains text>' }],
+    [unsafe]: 'unsafe-key value', [encoded]: 'ordinary-key value',
+  }).text();
+  expect(xml).toContain('<_metadata>untrusted metadata</_metadata>');
+  expect(xml).not.toContain(' metadata=');
+  expect(xml).not.toContain('<unexpected>');
+  expect(xml).toContain('&lt;markup remains text&gt;');
+  expect(xml).toContain(`<${encoded}>ordinary-key value</${encoded}>`);
+  expect(xml).toContain(`<${encoded}_2>unsafe-key value</${encoded}_2>`);
+});
+
+
+it("denies read-only PUT before purification or a storage lookup", async () => {
+  const url = new URL("https://example.test/api/v3/treatments/private-id");
+  const response = await handleApi3Treatments(new Request(url, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ a: '<b>' + 'x'.repeat(33000), b: '<b>' + 'y'.repeat(33000) }),
+  }), url, new Proxy({}, { get() { throw new Error("storage must not be queried"); } }) as DurableObjectStub<EntryStore>,
+  { sub: "reader", permissionGroups: [["api:treatments:read"]] }, { kind: "resource", identifier: "private-id" }, 1000);
+  expect(response.status).toBe(403);
 });

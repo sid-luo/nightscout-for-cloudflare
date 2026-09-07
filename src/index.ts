@@ -163,6 +163,7 @@ type AppEnv = Omit<Env, "API_SECRET"> & DexcomShareEnvironment & {
   DEXCOM_SHARE_CONNECTOR: DurableObjectNamespace<DexcomShareConnector>;
   API_SECRET?: string;
   API3_MAX_LIMIT?: string;
+  ALLOW_UNRESTRICTED_FRAME_EMBEDDING?: string;
   AUTH_DEFAULT_ROLES?: string;
   AUTH_FAIL_DELAY?: string;
   LOOP_APNS_KEY?: string;
@@ -2337,6 +2338,9 @@ async function handleEntriesApi(
       payload,
     );
     const store = env.ENTRY_STORE.getByName(tenant);
+    if (url.searchParams.has("_nscf_batch") && (spec === undefined || spec === "*")) {
+      return handleMaintenanceDelete(store, "entries", url);
+    }
     const id = spec !== undefined && /^[a-f\d]{24}$/.test(spec);
     const model = spec !== undefined && spec !== "*" && !id
       ? spec
@@ -2622,6 +2626,12 @@ async function handleCollectionApi(
       [`api:${collection}:read`, `api:${collection}:delete`],
       payload,
     );
+    if ((segment === undefined || segment === "*") && (
+      (collection === "profile" && (url.searchParams.has("keep") || (segment === undefined && !hasFindQuery(url))))
+      || ((collection === "treatments" || collection === "devicestatus") && url.searchParams.has("_nscf_batch"))
+    )) {
+      return handleMaintenanceDelete(store, collection as "profile" | "treatments" | "devicestatus", url);
+    }
     let selected: JsonDocument[];
     if (segment !== undefined && segment !== "*") {
       if (collection === "treatments" && (OBJECT_ID.test(segment) || UUID.test(segment))) {
@@ -2670,6 +2680,42 @@ async function mergedRoles(store: DurableObjectStub<EntryStore>): Promise<JsonDo
   return [...stored, ...builtins.filter((role) => !names.has(role.name as string))].sort((left, right) =>
     String(left.name).localeCompare(String(right.name)),
   );
+}
+
+async function handleMaintenanceDelete(
+  store: DurableObjectStub<EntryStore>,
+  collection: "entries" | "treatments" | "devicestatus" | "profile",
+  url: URL,
+): Promise<Response> {
+  const isProfile = collection === "profile";
+  const field = collection === "entries" ? "date" : "created_at";
+  const allowed = new Set(["_nscf_batch", "token", "secret", "tenant", "count", ...(isProfile
+    ? ["keep"] : [`find[${field}][$gte]`, `find[${field}][$lte]`])]);
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.has(key) || url.searchParams.getAll(key).length !== 1) {
+      throw new ApiError(400, "invalid_query", "unsupported or repeated maintenance parameter");
+    }
+  }
+  const batchValue = url.searchParams.get("_nscf_batch");
+  if (batchValue !== null && batchValue !== "1") throw new ApiError(400, "invalid_query", "invalid batch mode");
+  const keep = isProfile ? Number(url.searchParams.get("keep") ?? "100") : null;
+  const boundary = (op: string): number | null => {
+    const raw = url.searchParams.get(`find[${field}][$${op}]`);
+    if (raw === null || raw.trim() === "") return null;
+    return collection === "entries" ? Number(raw) : Date.parse(raw);
+  };
+  const from = isProfile ? null : boundary("gte");
+  const to = isProfile ? null : boundary("lte");
+  if (isProfile
+    ? !Number.isSafeInteger(keep) || keep! < 10 || keep! > 10000
+    : from === null || to === null || !Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+    throw new ApiError(400, "invalid_query", isProfile
+      ? "keep must be an integer between 10 and 10000" : "a valid inclusive date range is required");
+  }
+  const result = await store.maintenanceDelete(collection, from, to, keep, batchValue === "1");
+  if (result.limited) throw new ApiError(413, "maintenance_delete_limit",
+    "Cleanup exceeds the per-request record or revision budget. Use the admin batch tool; a record with over 128 revisions requires separate history cleanup.");
+  return json({ n: result.n, deletedCount: result.n, ok: 1, ...(batchValue === "1" ? { more: result.more } : {}) });
 }
 
 function publicAuthorizationSubjectMutation(subject: JsonDocument): JsonDocument {
@@ -2827,8 +2873,8 @@ async function handleAuthorizationApi(
 
 function api3VersionInfo(): Record<string, unknown> {
   return {
-    version: "15.0.7",
-    apiVersion: "3.0.3-alpha",
+    version: "15.0.8",
+    apiVersion: "3.0.5",
     srvDate: Date.now(),
     storage: {
       storage: "sqlite-durable-object",
@@ -3012,7 +3058,7 @@ async function handleApi(request: Request, env: AppEnv, url: URL): Promise<Respo
     return withoutBodyForHead(request, json([
       { version: "1.0.0", url: "/api/v1" },
       { version: "2.0.0", url: "/api/v2" },
-      { version: "3.0.3-alpha", url: "/api/v3" },
+      { version: "3.0.5", url: "/api/v3" },
     ]));
   }
 
@@ -3619,7 +3665,7 @@ function bootstrapDexcomShareConnector(
   );
 }
 
-export default {
+const application = {
   async fetch(
     request: Request,
     env: AppEnv,
@@ -3631,7 +3677,7 @@ export default {
       if (secretConfigurationError !== null) return secretConfigurationError;
       bootstrapDexcomShareConnector(request, env, url, ctx);
       if (url.pathname === "/healthz") {
-        return json({ status: "ok", upstream: "v15.0.7", storage: "sqlite-durable-object" });
+        return json({ status: "ok", upstream: "v15.0.8", storage: "sqlite-durable-object" });
       }
       if (url.pathname === "/pebble" || url.pathname === "/pebble/") {
         return await handlePebble(request, env, url);
@@ -3699,5 +3745,17 @@ export default {
       );
       return json({ error: { code: "internal_error", message: "Internal server error" } }, { status: 500 });
     }
+  },
+} satisfies ExportedHandler<AppEnv>;
+
+export default {
+  async fetch(request: Request, env: AppEnv, ctx?: ExecutionContext): Promise<Response> {
+    const response = await application.fetch(request, env, ctx);
+    // Preserve the WebSocket upgrade object; no HTML can be embedded here.
+    if (response.status === 101 || !["false", "off"].includes(String(env.ALLOW_UNRESTRICTED_FRAME_EMBEDDING).toLowerCase())) return response;
+    const secured = new Response(response.body, response);
+    secured.headers.set("X-Frame-Options", "SAMEORIGIN");
+    secured.headers.set("Content-Security-Policy", "frame-ancestors 'self'");
+    return secured;
   },
 } satisfies ExportedHandler<AppEnv>;

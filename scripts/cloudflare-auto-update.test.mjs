@@ -341,3 +341,14 @@ test("a one-commit repository not created by Cloudflare is not replaced", () => 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("prerelease checkouts cannot refresh themselves from the stable channel", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "nscf-beta-build-"));
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ version: "1.3.0-beta.1" }));
+    assert.equal(shouldAutoUpdate({ projectRoot: root, env: {
+      NSCF_AUTO_UPDATE: "1", WORKERS_CI: "1", WORKERS_CI_BUILD_UUID: "fixture", WORKERS_CI_COMMIT_SHA: "fixture",
+    } }), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

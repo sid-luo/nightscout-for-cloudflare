@@ -1,14 +1,19 @@
 # Upstream compatibility matrix
 
-Last audited: 2026-07-23
+Last baseline audit: 2026-09-07 (15.0.8 testing branch)
+
+The current beta changes and controlled limits are recorded in
+[the 15.0.8 testing track](testing/NIGHTSCOUT_15_0_8.md). The detailed historical
+15.0.7 acceptance evidence below remains historical; it is not a 15.0.8 live
+deployment claim. Use the regenerated 157-file test manifest for current mappings.
 
 ## Baseline and completion rule
 
 NSCF is an independent, unofficial Cloudflare port of
 `nightscout/cgm-remote-monitor`. The locked baseline is official Nightscout
-`v15.0.7` at commit
-`7e0e77f88fc113a76fe363504125f5b36b8a3fe3`; provenance and the release archive
-SHA-256 are recorded in `upstream/manifest.json`. The 655 files under
+`v15.0.8` at commit
+`92d0834219aa771b5837dbcbf1baeb839a200cf6`; provenance and the release archive
+SHA-256 are recorded in `upstream/manifest.json`. The 764 files under
 `vendor/nightscout` are an unmodified release snapshot.
 
 NSCF is **not a complete Nightscout port yet**. A route returning HTTP 200, an

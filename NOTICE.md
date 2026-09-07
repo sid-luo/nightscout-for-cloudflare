@@ -18,7 +18,7 @@ https://github.com/nightscout/cgm-remote-monitor/blob/master/COPYRIGHT
 NSCF is not a medical device and must not be used for diagnosis, dosing,
 insulin advice, or any other medical decision.
 
-The official Nightscout v15.0.7 source snapshot is vendored under
+The official Nightscout v15.0.8 source snapshot is vendored under
 `vendor/nightscout` and retains its upstream COPYRIGHT and LICENSE. Its UI,
 charts, plugins, translations and client calculations are built without an NSCF
 redesign. NSCF-authored code supplies only the Cloudflare platform adaptation.
@@ -48,3 +48,7 @@ installed packages. Source and license links are recorded by the npm package
 metadata and lockfile. EasyXML's npm artifact declares its dual license in
 `package.json` but does not include a standalone `LICENSE` file; this notice
 preserves that declaration explicitly.
+
+The 15.0.8 storage purifier and XML field-name normalization are adapted from
+Nightscout's AGPL-3.0-only implementation. sanitize-html (MIT), entities (BSD-2-Clause)
+and their dependencies retain their npm license metadata and notices.

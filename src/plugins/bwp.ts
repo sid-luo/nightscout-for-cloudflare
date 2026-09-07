@@ -111,6 +111,11 @@ export function calculateBolusWizardPreview(
     effect: 0,
     outcome: 0,
     bolusEstimate: 0,
+    bolusEstimateDisplay: "0",
+    outcomeDisplay: "0",
+    displayIOB: "0",
+    effectDisplay: "0",
+    displayLine: "BWP: 0U",
   };
   const current = latestSgv(sgvs, now);
   if (current !== undefined) result.scaledSGV = scaleEntry(current, settings);

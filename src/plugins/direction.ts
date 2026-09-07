@@ -15,13 +15,25 @@ const DIRECTION_CHARACTERS: Record<string, string> = {
   "RATE OUT OF RANGE": "⇕",
 };
 
+const DIRECTION_ALIASES: Record<string, string> = {
+  ...Object.fromEntries(Object.keys(DIRECTION_CHARACTERS).map((value) =>
+    [value.replace(/[\s_-]+/g, "").toLowerCase(), value])),
+  up: "SingleUp", down: "SingleDown", slideup: "FortyFiveUp",
+  slidedown: "FortyFiveDown", slightup: "FortyFiveUp", slightdown: "FortyFiveDown",
+};
+
+export function normalizeDirection(value: unknown): unknown {
+  if (!value) return value;
+  return DIRECTION_ALIASES[String(value).trim().replace(/[\s_-]+/g, "").toLowerCase()] ?? value;
+}
+
 /** Direct stateless port of locked plugins/direction.info(). */
 export function nightscoutDirectionInfo(
   sgv: RealtimeDocument | undefined,
 ): RealtimeDocument {
   const result: RealtimeDocument = { display: null };
   if (sgv === undefined) return result;
-  result.value = sgv.direction;
+  result.value = normalizeDirection(sgv.direction);
   result.label = DIRECTION_CHARACTERS[String(result.value)] ?? "-";
   const label = String(result.label);
   result.entity = label.length > 0 ? `&#${label.charCodeAt(0)};` : "";

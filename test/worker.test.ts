@@ -69,7 +69,7 @@ describe("official Nightscout UI assets", () => {
     expect(html).toContain('id="nscf-about"');
     expect(html).toContain('Upstream version <span class="version"></span>');
     expect(html).toContain("<strong>Nightscout for Cloudflare</strong>");
-    expect(html).toContain("Version <strong>1.2</strong>");
+    expect(html).toContain("Version <strong>1.3.0-beta.1</strong>");
     expect(html).toContain(
       'href="https://github.com/sid-luo/nightscout-for-cloudflare"',
     );
@@ -83,7 +83,7 @@ describe("official Nightscout UI assets", () => {
     const socketClient = await SELF.fetch("https://example.test/socket.io/socket.io.js");
     expect(socketClient.status).toBe(200);
     const socketClientSource = await socketClient.text();
-    expect(socketClientSource).toContain("Socket.IO v4.5.4");
+    expect(socketClientSource).toContain("Socket.IO v4.8.3");
     expect(socketClientSource).not.toContain("/api/v2/ddata/at?");
 
     const socketClientDigest = await crypto.subtle.digest(
@@ -95,7 +95,7 @@ describe("official Nightscout UI assets", () => {
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
     expect(socketClientHash).toBe(
-      "7a8ec840e096ddb18a8acc585baadcb3575b35cd6208b0193bdecfb43184fa42",
+      "bc425714aa8f2547d6939e3721ebafd3830a7562a1f6cb08acc1e794bd707954",
     );
 
     const tenantAdapter = await SELF.fetch(
@@ -113,9 +113,12 @@ describe("official Nightscout UI assets", () => {
       new Uint8Array(tenantAdapterDigest),
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
+    const maintenanceResponse = await SELF.fetch("https://example.test/platform/admin-maintenance.js");
+    expect(maintenanceResponse.status).toBe(200);
+    const maintenanceSource = await maintenanceResponse.text();
     const combinedDigest = await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(socketClientSource + tenantAdapterSource),
+      new TextEncoder().encode(socketClientSource + tenantAdapterSource + maintenanceSource),
     );
     const transportCachebuster = Array.from(
       new Uint8Array(combinedDigest),
@@ -126,14 +129,14 @@ describe("official Nightscout UI assets", () => {
       `src="/platform/socket-tenant-adapter.js?${tenantAdapterHash.slice(0, 12)}"`,
     );
     expect(html).toContain(
-      `navigator.serviceWorker.register('/sw.js?v15.0.7-7e0e77f88fc1-${transportCachebuster}'`,
+      `navigator.serviceWorker.register('/sw.js?v15.0.8-92d0834219aa-${transportCachebuster}'`,
     );
 
     const serviceWorker = await SELF.fetch("https://example.test/sw.js");
     expect(serviceWorker.status).toBe(200);
     const serviceWorkerSource = await serviceWorker.text();
     expect(serviceWorkerSource).toContain(
-      `var CACHE = 'v15.0.7-7e0e77f88fc1-${transportCachebuster}'`,
+      `var CACHE = 'v15.0.8-92d0834219aa-${transportCachebuster}'`,
     );
     expect(serviceWorkerSource).not.toContain("'/socket.io/socket.io.js'");
 
@@ -258,13 +261,13 @@ describe("Nightscout compatibility API", () => {
     const status = await response.json<Record<string, unknown>>();
     expect(status).toMatchObject({
       name: "Nightscout",
-      version: "15.0.7",
+      version: "15.0.8",
       runtimeState: "loaded",
       apiEnabled: true,
       careportalEnabled: true,
     });
     expect(status).not.toHaveProperty("nscf");
-    expect(status.version).toBe("15.0.7");
+    expect(status.version).toBe("15.0.8");
 
     const auth = await SELF.fetch("https://example.test/api/v1/verifyauth");
     expect(await auth.json()).toEqual({
@@ -330,7 +333,7 @@ describe("Nightscout compatibility API", () => {
     const statusScript = await SELF.fetch("https://example.test/api/v1/status.js");
     expect(statusScript.status).toBe(200);
     expect(statusScript.headers.get("Content-Type")).toMatch(/application\/javascript/);
-    expect(await statusScript.text()).toContain('"version":"15.0.7"');
+    expect(await statusScript.text()).toContain('"version":"15.0.8"');
 
     const properties = await (
       await SELF.fetch(`https://example.test/api/v2/properties?tenant=${name}`)
@@ -1026,8 +1029,8 @@ describe("Nightscout compatibility API", () => {
     expect(await response.json()).toMatchObject({
       status: 200,
       result: {
-        version: "15.0.7",
-        apiVersion: "3.0.3-alpha",
+        version: "15.0.8",
+        apiVersion: "3.0.5",
         srvDate: expect.any(Number),
         storage: {
           storage: "sqlite-durable-object",
@@ -1173,8 +1176,8 @@ describe("Nightscout compatibility API", () => {
     expect(await status.json()).toMatchObject({
       status: 200,
       result: {
-        version: "15.0.7",
-        apiVersion: "3.0.3-alpha",
+        version: "15.0.8",
+        apiVersion: "3.0.5",
         srvDate: expect.any(Number),
         apiPermissions: {
           devicestatus: "r",

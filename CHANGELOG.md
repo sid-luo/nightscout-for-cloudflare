@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0-beta.1 — Nightscout 15.0.8 testing track (unreleased)
+
+Independent testing branch only. Updates the unmodified upstream client and
+source snapshot to 15.0.8, API3 to 3.0.5 and Socket.IO client to 4.8.3. Includes
+stored-text and XML output hardening, BWP/COB/OpenAPS/direction fixes, profile
+APNS environment selection, and bounded admin date-range/profile cleanup.
+Prerelease source builds stay pinned to their checkout. See the
+[testing track](docs/testing/NIGHTSCOUT_15_0_8.md) for evidence and limitations.
+
+No stable Release, installer publication or production deployment is part of this beta.
+
+
 **English** | [简体中文](CHANGELOG.zh-CN.md)
 
 This log covers Nightscout for Cloudflare changes. The upstream Nightscout

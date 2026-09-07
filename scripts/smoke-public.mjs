@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
-const DEFAULT_ORIGIN = "https://nscf-phase1.nscf-lab-20260717.workers.dev";
-const origin = (process.argv[2] ?? DEFAULT_ORIGIN).replace(/\/$/, "");
+if (!process.argv[2]) throw new Error("Provide an explicit isolated test origin.");
+const origin = process.argv[2].replace(/\/$/, "");
 const tenant = `public-smoke-${Date.now()}`;
 let assertions = 0;
 
@@ -107,15 +107,15 @@ const healthResponse = await request("/healthz", {}, false);
 checked(healthResponse.status === 200, "health status");
 equal(await healthResponse.json(), {
   status: "ok",
-  upstream: "v15.0.7",
+  upstream: "v15.0.8",
   storage: "sqlite-durable-object",
 }, "health body");
 
 const versionResponse = await request("/api/v3/version");
 checked(versionResponse.status === 200, "API3 version status");
 const version = await versionResponse.json();
-checked(version.result?.version === "15.0.7", "Nightscout version");
-checked(version.result?.apiVersion === "3.0.3-alpha", "API3 version");
+checked(version.result?.version === "15.0.8", "Nightscout version");
+checked(version.result?.apiVersion === "3.0.5", "API3 version");
 
 const statusV1Response = await request("/api/v1/status.json");
 const statusV2Response = await request("/api/v2/status.json");

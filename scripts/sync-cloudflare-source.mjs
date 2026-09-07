@@ -217,6 +217,12 @@ export function shouldAutoUpdate({
   env = process.env,
   officialRepositoryUrl = OFFICIAL_REPOSITORY_URL,
 }) {
+  // A test checkout must never be replaced by the stable channel during a build.
+  const packagePath = path.join(projectRoot, "package.json");
+  if (existsSync(packagePath)) {
+    const version = JSON.parse(readFileSync(packagePath, "utf8")).version;
+    if (typeof version === "string" && /^\d+\.\d+\.\d+-/.test(version)) return false;
+  }
   if (env.NSCF_AUTO_UPDATE === "0") {
     return false;
   }

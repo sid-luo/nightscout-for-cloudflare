@@ -38,6 +38,8 @@ const socketTenantAdapterPath = path.join(
   "socket-tenant-adapter.js",
 );
 const socketTenantAdapter = await readFile(socketTenantAdapterPath, "utf8");
+const maintenanceAdapter = await readFile(path.join(projectRoot, "platform", "admin-maintenance.js"), "utf8");
+const maintenanceCachebuster = createHash("sha256").update(maintenanceAdapter).digest("hex").slice(0, 12);
 const socketClientCachebuster = createHash("sha256")
   .update(socketClient)
   .digest("hex")
@@ -49,6 +51,7 @@ const socketTenantCachebuster = createHash("sha256")
 const transportCachebuster = createHash("sha256")
   .update(socketClient)
   .update(socketTenantAdapter)
+  .update(maintenanceAdapter)
   .digest("hex")
   .slice(0, 12);
 const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${transportCachebuster}`;
@@ -56,7 +59,6 @@ const locals = { bundle: "/bundle", cachebuster };
 
 function displayProjectVersion(version) {
   return version
-    .replace(/^(\d+\.\d+)\.0-beta(?:\.\d+)?$/i, "$1 Beta")
     .replace(/^(\d+\.\d+)\.0$/, "$1");
 }
 
@@ -129,6 +131,7 @@ function applyPageAdapters(html, type) {
       Nightscout.admin_plugins("cleanentriesdb").label = "Glucose entries maintenance";
       Nightscout.admin_plugins("futureitems").label = "Future-dated records maintenance";
     </script>
+    <script src="/platform/admin-maintenance.js?${maintenanceCachebuster}"></script>
     <script src="/admin/js/admin.js"></script>`,
     );
   }
@@ -231,6 +234,7 @@ await writeFile(
   path.join(publicRoot, "platform", "socket-tenant-adapter.js"),
   socketTenantAdapter,
 );
+await writeFile(path.join(publicRoot, "platform", "admin-maintenance.js"), maintenanceAdapter);
 await mkdir(path.join(publicRoot, "api-docs"), { recursive: true });
 await cp(
   path.join(vendorRoot, "static", "api-docs.html"),

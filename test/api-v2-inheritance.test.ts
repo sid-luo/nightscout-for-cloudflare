@@ -44,14 +44,14 @@ describe("API v2 inherits the implemented v1 router", () => {
       expect(status.status).toBe(200);
       expect(await status.json()).toMatchObject({
         name: "Nightscout",
-        version: "15.0.7",
+        version: "15.0.8",
         runtimeState: "loaded",
       });
 
       const statusScript = await SELF.fetch(`https://example.test/api/${version}/status.js`);
       expect(statusScript.status).toBe(200);
       expect(statusScript.headers.get("Content-Type")).toMatch(/application\/javascript/);
-      expect(await statusScript.text()).toContain('"version":"15.0.7"');
+      expect(await statusScript.text()).toContain('"version":"15.0.8"');
 
       const verify = await SELF.fetch(`https://example.test/api/${version}/verifyauth`);
       expect(verify.status).toBe(200);

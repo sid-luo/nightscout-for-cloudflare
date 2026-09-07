@@ -185,7 +185,9 @@ export function prepareLoopPush(
       keyId: environment.apnsKeyId,
       teamId: environment.developerTeamId,
     },
-    production: environment.pushServerEnvironment === "production",
+    production: firstProfile?.isAPNSProduction !== undefined
+      ? Boolean(firstProfile.isAPNSProduction)
+      : environment.pushServerEnvironment === "production",
     deviceToken: String(loopSettings.deviceToken),
     notification: {
       alert,

@@ -97,6 +97,31 @@ export function api3Result(result: unknown, initHeaders?: HeadersInit): Response
   return api3Json({ status: 200, result }, 200, initHeaders);
 }
 
+// Port of v15.0.8 shared/renderer.js: keys are data, never XML syntax.
+function normalizeXmlElementNames(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || value instanceof Date
+    || ArrayBuffer.isView(value) || typeof (value as { toJSON?: unknown }).toJSON === "function") return value;
+  const source = value as Record<string, unknown>;
+  const safe = /^[A-Za-z_][A-Za-z0-9._-]*$/;
+  const keys = Object.keys(source);
+  const result: Record<string, unknown> = Array.isArray(value) ? [] as unknown as Record<string, unknown> : Object.create(null);
+  const reserved = new Set(keys.filter(key => safe.test(key)));
+  const used = new Set<string>();
+  for (const key of keys) {
+    const arrayIndex = Array.isArray(value) && /^(0|[1-9][0-9]*)$/.test(key);
+    let name = key;
+    if (!arrayIndex && !safe.test(key)) {
+      const encoded = `_encoded_${Buffer.from(key, "utf8").toString("base64url")}`;
+      name = encoded;
+      let suffix = 2;
+      while (reserved.has(name) || used.has(name)) name = `${encoded}_${suffix++}`;
+    }
+    used.add(name);
+    result[name] = normalizeXmlElementNames(source[key]);
+  }
+  return result;
+}
+
 export function renderApi3(format: Api3Format, data: unknown, initHeaders?: HeadersInit): Response {
   const headers = new Headers(initHeaders);
   varyOnAccept(headers);
@@ -121,9 +146,10 @@ export function renderApi3(format: Api3Format, data: unknown, initHeaders?: Head
     rootElement: "item",
     dateFormat: "ISO",
     manifest: true,
+    attributePrefix: false,
   });
   try {
-    return new Response(serializer.render(data), { status: 200, headers: renderedHeaders });
+    return new Response(serializer.render(normalizeXmlElementNames(data)), { status: 200, headers: renderedHeaders });
   } catch (error) {
     throw new Api3RenderError(error, renderedHeaders);
   }

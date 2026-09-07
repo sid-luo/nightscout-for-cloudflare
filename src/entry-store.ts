@@ -1,4 +1,4 @@
-import { sanitizeStoredDocument } from "./storage-purifier";
+import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storage-purifier";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
 import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
 import { DurableObject } from "cloudflare:workers";
@@ -3748,6 +3748,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         for (const value of values) {
           const document = realtimeRootWriteDocument(value);
           if (document === null) return { acknowledgement: [], changed: false };
+          if (request.collection === "profile") validateLegacyProfileStartDate(document);
           prepared.push(sanitizeStoredDocument(document));
         }
       } catch {
@@ -4623,6 +4624,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let documents = JSON.parse(documentsJson) as JsonDocument[];
     if (collection !== "subjects" && collection !== "roles") {
       documents = documents.map(sanitizeStoredDocument);
+      if (collection === "profile") documents.forEach(validateLegacyProfileStartDate);
     }
     if (collection === "treatments") {
       const result = await this.createLegacyTreatments(documentsJson);
@@ -4785,6 +4787,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let documents = JSON.parse(documentsJson) as JsonDocument[];
     if (collection !== "subjects" && collection !== "roles") {
       documents = documents.map(sanitizeStoredDocument);
+      if (collection === "profile") documents.forEach(validateLegacyProfileStartDate);
     }
     if (collection === "treatments") {
       return this.saveLegacyTreatmentsWithUuidHandling(documentsJson, true);
@@ -4910,6 +4913,20 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           this.documentRepository().upsertTreatment(document, uuidHandling).document),
       );
       await this.publishRootDataUpdate();
+      return result;
+    });
+  }
+
+  async maintenanceDelete(
+    collection: "entries" | "treatments" | "devicestatus" | "profile",
+    from: number | null,
+    to: number | null,
+    keep: number | null,
+    batch: boolean,
+  ): Promise<{ n: number; more: boolean; limited: boolean }> {
+    return this.withStorageWrites(async () => {
+      const result = this.documentRepository().maintenanceDelete(collection, from, to, keep, batch);
+      if (result.n > 0) await this.publishRootDataUpdate();
       return result;
     });
   }

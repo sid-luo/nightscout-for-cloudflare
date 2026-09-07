@@ -436,7 +436,7 @@ describe("direct Engine.IO 4 WebSocket transport", () => {
         dbstats: {},
         status: {
           status: "ok",
-          version: "15.0.7",
+          version: "15.0.8",
           versionNum: 150007,
         },
       }],

@@ -598,7 +598,7 @@ export function nightscoutStatus(
   return {
     status: "ok",
     name: "Nightscout",
-    version: "15.0.7",
+    version: "15.0.8",
     serverTime: now.toISOString(),
     serverTimeEpoch: now.getTime(),
     apiEnabled: true,
@@ -622,7 +622,7 @@ export function nightscoutWebsocketStatus(
   const websocketStatus: Record<string, unknown> = {
     status: "ok",
     name: "Nightscout",
-    version: "15.0.7",
+    version: "15.0.8",
     versionNum: 150007,
     serverTime: now.toISOString(),
     apiEnabled: true,

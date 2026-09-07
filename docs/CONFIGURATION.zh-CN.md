@@ -100,6 +100,14 @@ SHOW_FORECAST=openaps
 这些变量只把默认值传给浏览器。它们不会让 Worker 在后台请求这些 URL，也不会
 产生定时任务或数据库写入。
 
+### 嵌入保护（15.0.8）
+
+`ALLOW_UNRESTRICTED_FRAME_EMBEDDING` 与官方 15.0.8 一样默认 `true`。
+设为 `false` 或 `off` 后，返回 `X-Frame-Options: SAMEORIGIN` 和强制生效的
+CSP `frame-ancestors 'self'`，只允许同源网页嵌入。`true`／`on`、未设置或
+无效值保留兼容默认值。它控制哪些网页能嵌入本站；`FRAME_URL_n` 独立控制
+本站分屏页面加载什么内容。更广泛的 `SECURE_CSP*` 服务器配置仍不属于本移植范围。
+
 ## 功能开关
 
 | 变量 | 默认值 | 说明 |

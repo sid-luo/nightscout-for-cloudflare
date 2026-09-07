@@ -252,6 +252,36 @@ export function parseApi3Sort(url: URL): DocumentSort[] {
   return sort;
 }
 
+/** Expand the OpenAPI filter_parameters array without splitting spaces in values. */
+function expandedSearchParameters(url: URL): Map<string, string | string[] | undefined> {
+  const result = new Map<string, string | string[] | undefined>();
+  for (const name of new Set(url.searchParams.keys())) {
+    if (!/^filter_parameters(?:\[\d*\])?$/.test(name)) {
+      result.set(name, expressScalar(queryValues(url, name)));
+      continue;
+    }
+    for (const value of queryValues(url, name)) {
+      const starts: number[] = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (index > 0 && !/\s/.test(value[index - 1]!)) continue;
+        const separator = value.indexOf("=", index);
+        if (separator < 0) continue;
+        const parameter = value.slice(index, separator);
+        const match = /\s/.test(parameter) ? null : FILTER_PARAMETER.exec(parameter);
+        if (match !== null && FILTER_OPERATORS.has(match[2]!)) starts.push(index);
+      }
+      const parts = starts.length === 0 ? [value] : starts.map((start, index) =>
+        value.slice(start, starts[index + 1]).trim()).filter(Boolean);
+      for (const part of parts) {
+        const separator = part.indexOf("=");
+        result.set(separator < 0 ? part : part.slice(0, separator),
+          separator < 0 ? undefined : part.slice(separator + 1));
+      }
+    }
+  }
+  return result;
+}
+
 export function parseApi3Search(
   url: URL,
   configuredMaxLimit: unknown = API3_MAX_LIMIT,
@@ -262,8 +292,7 @@ export function parseApi3Search(
   // isValid condition. Preserve those observable semantics before SQL sees the
   // query instead of incorrectly ANDing every parameter.
   const filtersByField = new Map<string, DocumentFilter>();
-  const parameterNames = new Set(url.searchParams.keys());
-  for (const name of parameterNames) {
+  for (const [name, raw] of expandedSearchParameters(url)) {
     if (RESERVED_PARAMETERS.has(name)) continue;
     let field = name;
     let operator = "eq";
@@ -276,7 +305,6 @@ export function parseApi3Search(
       }
     }
     assertSafeField(field, "filter");
-    const raw = expressScalar(queryValues(url, name));
     if (raw === undefined) continue;
     const value = operator === "in" || operator === "nin"
       ? jsPropertyKey(raw)

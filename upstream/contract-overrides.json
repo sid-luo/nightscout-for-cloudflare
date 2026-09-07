@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "expected_test_count": 111,
+  "expected_test_count": 157,
   "version_prefixes": {
     "root": "/api",
     "v1": "/api/v1",
@@ -9,129 +9,188 @@
   },
   "route_modules": [
     {
-      "api_versions": ["root"],
+      "api_versions": [
+        "root"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/root.js",
       "registered_by": "vendor/nightscout/lib/server/app.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/entries/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/treatments/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/profile/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/devicestatus/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/notifications-api.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/activity/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/verifyauth.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/adminnotifiesapi.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/food/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/status.js",
       "registered_by": "vendor/nightscout/lib/api/index.js"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "/experiments",
       "source_file": "vendor/nightscout/lib/api/experiments/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js",
       "condition": "api-enabled"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/alexa/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js",
       "condition": "alexa-context-enabled"
     },
     {
-      "api_versions": ["v1", "v2"],
+      "api_versions": [
+        "v1",
+        "v2"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api/googlehome/index.js",
       "registered_by": "vendor/nightscout/lib/api/index.js",
       "condition": "google-home-context-enabled"
     },
     {
-      "api_versions": ["v2"],
+      "api_versions": [
+        "v2"
+      ],
       "mount_path": "/properties",
       "source_file": "vendor/nightscout/lib/api2/properties.js",
       "registered_by": "vendor/nightscout/lib/api2/index.js"
     },
     {
-      "api_versions": ["v2"],
+      "api_versions": [
+        "v2"
+      ],
       "mount_path": "/authorization",
       "source_file": "vendor/nightscout/lib/authorization/endpoints.js",
       "registered_by": "vendor/nightscout/lib/api2/index.js"
     },
     {
-      "api_versions": ["v2"],
+      "api_versions": [
+        "v2"
+      ],
       "mount_path": "/ddata",
       "source_file": "vendor/nightscout/lib/data/endpoints.js",
       "registered_by": "vendor/nightscout/lib/api2/index.js"
     },
     {
-      "api_versions": ["v2"],
+      "api_versions": [
+        "v2"
+      ],
       "mount_path": "/notifications",
       "source_file": "vendor/nightscout/lib/api2/notifications-v2.js",
       "registered_by": "vendor/nightscout/lib/api2/index.js"
     },
     {
-      "api_versions": ["v2"],
+      "api_versions": [
+        "v2"
+      ],
       "mount_path": "/summary",
       "source_file": "vendor/nightscout/lib/api2/summary/index.js",
       "registered_by": "vendor/nightscout/lib/api2/index.js"
     },
     {
-      "api_versions": ["v3"],
+      "api_versions": [
+        "v3"
+      ],
       "mount_path": "",
       "source_file": "vendor/nightscout/lib/api3/index.js",
       "source_sha256": "4f23729cbbe3630c54503ae3d7d32acd349a530253855b1f841b4191ade721b7",
       "registered_by": "vendor/nightscout/lib/server/app.js",
-      "only_paths": ["/version", "/test", "/lastModified", "/status", "/swagger-ui-dist"],
+      "only_paths": [
+        "/version",
+        "/test",
+        "/lastModified",
+        "/status",
+        "/swagger-ui-dist"
+      ],
       "only_routes": [
         "GET /version",
         "GET /test",
@@ -148,7 +207,7 @@
       "collections_source": "vendor/nightscout/lib/api3/index.js",
       "collections_setting": "enabledCollections",
       "registration_file": "vendor/nightscout/lib/api3/generic/collection.js",
-      "registration_sha256": "fc315c164d911e448dcc848f756c0b219a6eb1c64f3d7fe0c548cf3731ee3227",
+      "registration_sha256": "b37fe9f5122e9474b790903b6d1af3fae5a9db3dac5d65a49da88fc0238640c3",
       "risk": "Collection names and route prefixes are assembled at runtime. The generator reads the locked enabledCollections setting and expands the reviewed templates only while the registration source hash is locked and their method, suffix, and handler source exactly match collection.js.",
       "routes": [
         {
@@ -214,19 +273,25 @@
     "v3 GET /api/v3/settings": {
       "mode": "jwt",
       "credential_required": true,
-      "permissions": ["api:settings:admin"],
+      "permissions": [
+        "api:settings:admin"
+      ],
       "note": "The locked API3 settings search branch requires api:settings:admin."
     },
     "v3 GET /api/v3/settings/history": {
       "mode": "jwt",
       "credential_required": true,
-      "permissions": ["api:settings:admin"],
+      "permissions": [
+        "api:settings:admin"
+      ],
       "note": "The locked API3 settings history branch requires api:settings:admin; ordinary collection history remains read-protected."
     },
     "v3 GET /api/v3/settings/history/:lastModified": {
       "mode": "jwt",
       "credential_required": true,
-      "permissions": ["api:settings:admin"],
+      "permissions": [
+        "api:settings:admin"
+      ],
       "note": "The locked API3 settings history branch requires api:settings:admin; ordinary collection history remains read-protected."
     },
     "root GET /api/versions": {
@@ -250,13 +315,17 @@
     "v1 GET /api/v1/adminnotifies": {
       "mode": "optional-admin-credentials",
       "credential_required": false,
-      "permissions": ["*:*:admin"],
+      "permissions": [
+        "*:*:admin"
+      ],
       "note": "Anonymous callers receive the count; notification contents are filtered to full admins."
     },
     "v2 GET /api/v2/adminnotifies": {
       "mode": "optional-admin-credentials",
       "credential_required": false,
-      "permissions": ["*:*:admin"],
+      "permissions": [
+        "*:*:admin"
+      ],
       "note": "Inherited from API v1; notification contents are filtered to full admins."
     },
     "v2 GET /api/v2/authorization/request/:accessToken": {
@@ -268,7 +337,9 @@
     "v2 GET /api/v2/authorization/debug/check/:permission": {
       "mode": "dynamic-nightscout-permission",
       "credential_required": true,
-      "permissions": ["path-parameter:permission"],
+      "permissions": [
+        "path-parameter:permission"
+      ],
       "note": "Development/debug endpoint; the required permission is read from the path."
     },
     "v3 GET /api/v3/version": {
@@ -280,13 +351,17 @@
     "v3 GET /api/v3/test": {
       "mode": "jwt",
       "credential_required": true,
-      "permissions": ["api:entries:read"],
+      "permissions": [
+        "api:entries:read"
+      ],
       "note": "Registered only in development, test, or CI environments."
     },
     "v3 GET /api/v3/lastModified": {
       "mode": "jwt",
       "credential_required": true,
-      "permissions": ["api:{collection}:read"],
+      "permissions": [
+        "api:{collection}:read"
+      ],
       "note": "Only readable collections are included in the response."
     },
     "v3 GET /api/v3/status": {
@@ -398,10 +473,6 @@
       "status": "pass",
       "reason": "The complete locked upstream server file runs unchanged through scripts/run-upstream-server-plugin-contracts.mjs. Its original aggregation case retains message-based deduplication. The Workers suite additionally covers SQLite DO persistence across eviction, first-metadata retention, public-count/admin-body filtering, the exact eight/twelve-hour windows, readable-site and bad-credential producers, the ADMIN_NOTIFIES_ENABLED gate, and a bounded Free-plan transient-message adapter."
     },
-    "vendor/nightscout/tests/admintools.test.js": {
-      "status": "pass",
-      "reason": "The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. Its original Admin Tools UI loads DeviceStatus/Treatment/Entry counts and exercises delete-all, delete-old and future-record cleanup buttons with the exact status text. Network calls are the locked test's mocks, so this proves shipped client behavior rather than a current credentialed remote cleanup."
-    },
     "vendor/nightscout/tests/reportstorage.test.js": {
       "status": "pass",
       "reason": "The complete locked upstream file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. All four report-settings storage cases preserve the default property set, tracked localStorage writes and ignored unknown properties with the original reportstorage module."
@@ -425,10 +496,6 @@
     "vendor/nightscout/tests/verifyauth.test.js": {
       "status": "adapted",
       "reason": "All four locked verifyauth cases are represented in test/auth-compat.test.ts: default readable permissions, wrong-secret UNAUTHORIZED inside the HTTP-200 envelope, persisted per-IP failure-delay accumulation on repeated attempts, and exact SHA-1/SHA-512 authorized responses. Success clears delay state; Durable Object alarms prune expired rows without relying on module-global timers."
-    },
-    "vendor/nightscout/tests/hashauth.test.js": {
-      "status": "pass",
-      "reason": "The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. All five unauthorized/authorized state, optional localStorage persistence, removal and too-short-secret alert cases execute against the original client hashauth module. No credential value is supplied by the runner or recorded by NSCF."
     },
     "vendor/nightscout/tests/errorcodes.test.js": {
       "status": "pass",
@@ -468,7 +535,7 @@
     },
     "vendor/nightscout/tests/api.deduplication.test.js": {
       "status": "adapted",
-      "reason": "Represented by the complete nine-case Workers-runtime v1 contract in test/api-v1-deduplication.test.ts: the locked AAPS treatment and entry replays, Loop carb and dose replays, Trio meal and temporary-target replays, four-item mixed batch, distinct separately timestamped cross-client uploads, and original treatment _id response. The tests preserve the actual locked selectors—Entries sysTime+type and Treatments identifier/_id then created_at+eventType—rather than treating descriptive pump/sync/id comments as database unique indexes."
+      "reason": "Represented by the complete nine-case Workers-runtime v1 contract in test/api-v1-deduplication.test.ts: the locked AAPS treatment and entry replays, Loop carb and dose replays, Trio meal and temporary-target replays, four-item mixed batch, distinct separately timestamped cross-client uploads, and original treatment _id response. The tests preserve the actual locked selectors\u2014Entries sysTime+type and Treatments identifier/_id then created_at+eventType\u2014rather than treating descriptive pump/sync/id comments as database unique indexes."
     },
     "vendor/nightscout/tests/api.alexa.test.js": {
       "status": "adapted",
@@ -597,10 +664,6 @@
     "vendor/nightscout/tests/plugins.test.js": {
       "status": "adapted",
       "reason": "Represented by both named Workers-runtime cases in test/plugin-registry-contract.test.ts plus request-isolation and public-dispatcher coverage: the exact client/server default catalogs and order, cross-side exclusions, enable flags, lookup behavior, shown-plugin/type gates, hook ordering, per-plugin error containment, event-type aggregation, iterators and client extended-settings projection. src/plugins/registry.ts replaces Node dynamic require with locked static metadata, and the live API v2 property dispatcher now executes its implemented server property adapters through that registry. This is registry compatibility; algorithms for still-unported plugins remain separately unresolved."
-    },
-    "vendor/nightscout/tests/pluginbase.test.js": {
-      "status": "pass",
-      "reason": "The complete locked upstream test file runs unchanged through scripts/run-upstream-client-contracts.mjs. Before Mocha starts, the gate proves that NSCF public/bundle/js/bundle.app.js is byte-identical to the locked upstream-built bundle loaded by the test; the named headless DOM pill case then passes against that exact client code. This is direct official-client evidence and does not imply that unresolved server plugin algorithms are implemented."
     },
     "vendor/nightscout/tests/api.shape-handling.test.js": {
       "status": "adapted",
@@ -765,6 +828,146 @@
     "vendor/nightscout/tests/mmconnect.test.js": {
       "status": "excluded-fixed-scope",
       "reason": "Fixed-scope exclusion: MiniMed CareLink ingestion is an external real-CGM bridge and is disabled in the simulated-data port."
+    },
+    "vendor/nightscout/tests/admintools.modern.test.js": {
+      "status": "pass",
+      "reason": "The complete renamed v15.0.8 upstream client test file runs unchanged through scripts/run-upstream-client-contracts.mjs; UI byte equality is checked before execution."
+    },
+    "vendor/nightscout/tests/hashauth.modern.test.js": {
+      "status": "pass",
+      "reason": "The complete renamed v15.0.8 upstream client test file runs unchanged through scripts/run-upstream-client-contracts.mjs; UI byte equality is checked before execution."
+    },
+    "vendor/nightscout/tests/pluginbase.modern.test.js": {
+      "status": "pass",
+      "reason": "The complete renamed v15.0.8 upstream client test file runs unchanged through scripts/run-upstream-client-contracts.mjs; UI byte equality is checked before execution."
+    },
+    "vendor/nightscout/tests/client-core/openaps-plugin-wiring.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/clock-client.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-duration.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-records.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-resolve-event-name.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/stored-output-sinks.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/loop-plugin-wiring.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/profile-sinks.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/devicestatus-loop.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-normalize-treatment.captured.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/utils.deepMerge.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-profiles.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-normalize-treatment.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-confirm-text.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/devicestatus-uploader.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/devicestatus-openaps.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-event-types.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-migrate.captured.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-migrate.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/pump-plugin-wiring.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/careportal-validate.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/devicestatus-pump.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/browser-settings.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-ranges.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/captured-fixtures.lint.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/profileeditor.records.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/pill-goldens.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/client-core/profile-editor-defaults-and-time.test.js": {
+      "status": "pass",
+      "reason": "Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched."
+    },
+    "vendor/nightscout/tests/daterangedelete.test.js": {
+      "status": "adapted",
+      "reason": "Official form, preview and client validation tests run unchanged. The deployed Cloudflare action preserves the official form and profile-timezone bounds but uses bounded authenticated DELETE batches. scripts/admin-maintenance.test.mjs covers DST, confirmed totals, cancellation, malformed replies and stopping after partial failure; test/maintenance-15-0-8.test.ts covers all three real Workers collections, boundary preservation, auth, selectors and replay."
+    },
+    "vendor/nightscout/tests/loop-server.test.js": {
+      "status": "adapted",
+      "reason": "All three profile-versus-environment APNS production-selection vectors are represented in test/loop-push-contract.test.ts, alongside the existing Workers provider-token and mocked delivery contracts. The official file also runs unchanged in the server-plugin runner; no APNS message is sent."
+    },
+    "vendor/nightscout/tests/openaps.missingPill.test.js": {
+      "status": "adapted",
+      "reason": "test/openaps-pump-plugin-contract.test.ts loads the exact official captured working/missing-rate fixtures, retains UAM and over 100 forecast points, and checks missing, blank and null rate/duration values do not render invalid Temp Basal Started details. The official three-case file also runs unchanged."
+    },
+    "vendor/nightscout/tests/api3.renderer.security.test.js": {
+      "status": "adapted",
+      "reason": "test/api3-input.test.ts represents underscore fields as elements, unsafe nested-name encoding and reserved-name collision preservation. test/api3-treatments.test.ts verifies real persisted underscore-object output returns valid element structure instead of the old serializer failure. normalizeXmlElementNames and attributePrefix=false are ported directly from the locked upstream renderer."
     }
   }
 }

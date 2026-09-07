@@ -1,3 +1,5 @@
+import missingRateFixture from "../vendor/nightscout/tests/data/missingRateOnLastEnacted.json";
+import workingForecastFixture from "../vendor/nightscout/tests/data/statusWithWorkingForecast.json";
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
@@ -120,6 +122,14 @@ describe("locked Nightscout openaps.test.js", () => {
       value: "awaitingpi ◉ Waiting",
     });
     expect(visual.forecastPoints).toHaveLength(12);
+  });
+
+  it("retains forecasts without invalid basal details when enacted rate is missing", () => {
+    const statuses = openApsStatuses();
+    delete ((statuses[0]!.openaps as RealtimeDocument).enacted as RealtimeDocument).rate;
+    const visual = openApsVisualization(calculateOpenApsProperty(statuses, openApsNow), openApsNow);
+    expect(visual.forecastPoints).toHaveLength(12);
+    expect(JSON.stringify(visual.pill)).not.toMatch(/NaN|undefined/);
   });
 
   it("format OpenAPS pill BG in mmol when display units are mmol", () => {
@@ -433,4 +443,25 @@ describe("Workers OpenAPS/Pump platform adapter", () => {
     );
     expect(await disabled.json()).toEqual({});
   });
+});
+
+
+it("preserves captured OpenAPS UAM forecasts across absent, null and blank basal details", () => {
+  for (const [fixture, details] of [
+    [workingForecastFixture, null], [missingRateFixture, null],
+    [workingForecastFixture, { rate: null }], [workingForecastFixture, { rate: "" }],
+    [workingForecastFixture, { duration: null }], [workingForecastFixture, { duration: "" }],
+  ] as const) {
+    const statuses = structuredClone(fixture) as unknown as RealtimeDocument[];
+    for (const status of statuses) status.mills = Date.parse(String(status.created_at));
+    if (details) Object.assign((statuses[0]!.openaps as RealtimeDocument).enacted!, details);
+    const time = Number(statuses[0]!.mills);
+    const property = calculateOpenApsProperty(statuses, time);
+    expect((property.lastPredBGs as RealtimeDocument).UAM).toBeInstanceOf(Array);
+    const visual = openApsVisualization(property, time);
+    expect(visual.forecastPoints.length).toBeGreaterThan(100);
+    if (details || fixture === missingRateFixture) {
+      expect(JSON.stringify(visual.pill.info)).not.toMatch(/undefined|Temp Basal Started/);
+    }
+  }
 });

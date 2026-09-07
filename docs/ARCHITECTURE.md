@@ -1,6 +1,11 @@
 # NSCF architecture
 
-Last audited: 2026-07-23
+Last baseline audit: 2026-09-07 (15.0.8 testing branch)
+
+Current beta: NSCF 1.3.0-beta.1, upstream 15.0.8 / API3 3.0.5. See
+[testing-track changes and limits](testing/NIGHTSCOUT_15_0_8.md) for the current
+sanitizer, XML renderer, bounded maintenance actions, framing option and protocol
+updates. The historical evidence below is retained with its original versions.
 
 This document distinguishes the adapter that exists today from the target
 architecture required for a complete Nightscout v15.0.7 port. The current

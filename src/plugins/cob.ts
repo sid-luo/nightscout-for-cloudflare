@@ -286,7 +286,7 @@ export function calculateCobTotal(
   profile: CobProfile | undefined,
   suppliedTime: number | Date = Date.now(),
   specProfile?: string,
-  wallClock = Date.now(),
+  _wallClock = Date.now(),
 ): RealtimeDocument {
   if (!profile || !profile.hasData()) return {};
   if (
@@ -297,7 +297,7 @@ export function calculateCobTotal(
   let result = lastCobDeviceStatus(deviceStatuses, time);
   const tenMinutes = nightscoutTimes.mins(10).msecs;
   if (isEmpty(result) || result.cob === null || result.cob === undefined ||
-      wallClock - Number(result.mills) > tenMinutes) {
+      !Number.isFinite(result.mills) || time - Number(result.mills) > tenMinutes) {
     const treatmentCob = treatments.length > 0
       ? calculateCobFromTreatments(
         treatments,

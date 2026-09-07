@@ -1,4 +1,4 @@
-import { sanitizeStoredDocument } from "./storage-purifier";
+import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storage-purifier";
 import type { DocumentCollection, JsonDocument } from "./entry-store";
 import type { DocumentFilter, DocumentQuery } from "./document-repository";
 import { ApiError } from "./model";
@@ -169,6 +169,10 @@ function normalizeDocument(
   }
   assertJsonValue(value);
   const document = { ...(value as JsonDocument) };
+  if (collection === "profile") {
+    try { validateLegacyProfileStartDate(document); }
+    catch (error) { throw new ApiError(400, "invalid_document", (error as Error).message); }
+  }
   if (collection !== "treatments" && !isValidLegacyObjectId(document._id)) {
     throw new ApiError(400, "invalid_document", "_id must be a 24-character hexadecimal string");
   }

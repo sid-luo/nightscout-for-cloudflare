@@ -47,12 +47,12 @@ const HANDSHAKE: EngineIoV4Handshake = {
   maxPayload: 1_000_000,
 };
 
-describe("official Nightscout Socket.IO 4.5.4 dependency contract", () => {
+describe("official Nightscout Socket.IO 4.8.3 dependency contract", () => {
   it("pins the browser server bundle and parser protocols independently from the test client", () => {
-    expect(nightscoutPackageLock.packages["node_modules/socket.io"].version).toBe("4.5.4");
-    expect(nightscoutPackageLock.packages["node_modules/engine.io"].version).toBe("6.2.1");
-    expect(nightscoutPackageLock.packages["node_modules/engine.io-parser"].version).toBe("5.0.7");
-    expect(nightscoutPackageLock.packages["node_modules/socket.io-parser"].version).toBe("4.2.5");
+    expect(nightscoutPackageLock.packages["node_modules/socket.io"].version).toBe("4.8.3");
+    expect(nightscoutPackageLock.packages["node_modules/engine.io"].version).toBe("6.6.7");
+    expect(nightscoutPackageLock.packages["node_modules/engine.io-parser"].version).toBe("5.2.3");
+    expect(nightscoutPackageLock.packages["node_modules/socket.io-parser"].version).toBe("4.2.6");
     expect(nightscoutPackageLock.packages["node_modules/socket.io-client"].version).toBe("4.8.3");
     expect(ENGINE_IO_V4_PROTOCOL).toBe(4);
     expect(SOCKET_IO_V5_PROTOCOL).toBe(5);

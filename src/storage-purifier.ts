@@ -68,3 +68,13 @@ export function sanitizeStoredDocument<T extends object>(input: T): T {
   }
   return copy;
 }
+
+
+/** Legacy profile storage uses startDate as its ordering boundary in 15.0.8. */
+export function validateLegacyProfileStartDate(document: Record<string, unknown>): void {
+  const value = document.startDate;
+  if (value === undefined || value === null || typeof value === "string"
+    || (typeof value === "number" && Number.isFinite(value))
+    || (value instanceof Date && Number.isFinite(value.getTime()))) return;
+  throw new RangeError("Profile startDate must be a string, finite number, valid date, or null");
+}

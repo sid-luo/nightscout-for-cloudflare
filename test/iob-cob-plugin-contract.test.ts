@@ -355,6 +355,14 @@ describe("locked Nightscout cob.test.js", () => {
     });
   });
 
+  it("uses the requested historical time to select fresh OpenAPS COB", () => {
+    const fixture = treatmentContext();
+    expect(calculateCobTotal(fixture.treatments, [{
+      device: "openaps://history", mills: now - 1,
+      openaps: { enacted: { COB: 7, timestamp: now - 1 } },
+    }], fixture.profile, now, undefined, now + 90 * 86400000)).toMatchObject({ cob: 7, source: "OpenAPS" });
+  });
+
   it("should return COB data from OpenAPS", () => {
     const fixture = treatmentContext();
     expect(calculateCobTotal(fixture.treatments, [{

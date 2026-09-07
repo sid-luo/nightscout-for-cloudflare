@@ -58,7 +58,7 @@ describe("locked Nightscout language module", () => {
     const language = createNightscoutLanguage();
     language.set("zh_tw");
     language.offerTranslations(localization(traditionalChinese));
-    expect(language.translate("Carbs")).toBe("碳水");
+    expect(language.translate("Carbs")).toBe("碳水化合物");
   });
 
   it("falls back to the English filename for unsupported language codes", () => {

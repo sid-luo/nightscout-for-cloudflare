@@ -1,4 +1,4 @@
-import { sanitizeStoredDocument } from "./storage-purifier";
+import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storage-purifier";
 import type { JsonDocument, JsonValue } from "./entry-store";
 import { LEGACY_ENTRY_DEFAULT_WINDOW_MS } from "./model";
 import type { HistoryQuery, ValidatedEntry } from "./model";
@@ -1315,6 +1315,12 @@ export function migrateDocumentsV4(sql: SqlStorage): void {
   sql.exec(`
     CREATE INDEX IF NOT EXISTS documents_collection_sort
       ON documents(collection, sort_time DESC);
+    CREATE INDEX IF NOT EXISTS documents_collection_created_at
+      ON documents(collection, json_extract(body, '$.created_at') DESC, id DESC)
+      WHERE collection IN ('treatments', 'devicestatus') AND json_valid(body);
+    CREATE INDEX IF NOT EXISTS documents_collection_profile_start
+      ON documents(collection, json_extract(body, '$.startDate') DESC, id DESC)
+      WHERE collection = 'profile' AND json_valid(body);
     CREATE INDEX IF NOT EXISTS documents_collection_identifier
       ON documents(collection, identifier);
     CREATE INDEX IF NOT EXISTS documents_collection_identifier_presence
@@ -2254,6 +2260,7 @@ export class SqliteDocumentRepository {
     // Final boundary also protects internal/importer writes and old values
     // retained by PATCH before publishing the canonical snapshot.
     document = sanitizeStoredDocument(document);
+    if (policy === "legacy" && collection === "profile") validateLegacyProfileStartDate(document);
     const api3Collection = collection as Api3CollectionName;
     const revision = (existing?.revision ?? 0) + 1;
     const identity = identifierMetadata(document);
@@ -3404,6 +3411,61 @@ export class SqliteDocumentRepository {
     actor: string | null = null,
   ): DocumentDeleteResult {
     return this.deleteTreatment(identity, permanent, actor, collection, true);
+  }
+
+  /** Bounded admin cleanup; every deleted snapshot keeps the normal invalidation/events. */
+  maintenanceDelete(
+    collection: "entries" | "treatments" | "devicestatus" | "profile",
+    from: number | null,
+    to: number | null,
+    keep: number | null,
+    batch: boolean,
+  ): { n: number; more: boolean; limited: boolean } {
+    if (collection === "profile"
+      ? keep === null || !Number.isSafeInteger(keep) || keep < 10 || keep > 10000
+      : from === null || to === null || !Number.isFinite(from) || !Number.isFinite(to) || from > to) {
+      throw new Error("invalid maintenance selector");
+    }
+    return this.storage.transactionSync(() => {
+      const maximum = batch ? 64 : 128;
+      const rows = collection === "profile"
+        ? this.sql.exec<{ id: string }>(
+          `SELECT id FROM documents WHERE collection = 'profile' AND json_valid(body)
+           ORDER BY json_extract(body, '$.startDate') DESC, id DESC LIMIT ? OFFSET ?`,
+          maximum + 1, keep!,
+        ).toArray()
+        : collection === "entries"
+          ? this.sql.exec<{ id: string }>(
+            `SELECT id FROM documents WHERE collection = 'entries' AND sort_time >= ? AND sort_time <= ?
+             ORDER BY sort_time DESC, id DESC LIMIT ?`,
+            from!, to!, maximum + 1,
+          ).toArray()
+          : this.sql.exec<{ id: string }>(
+            `SELECT id FROM documents WHERE collection = ?
+             AND collection IN ('treatments', 'devicestatus') AND json_valid(body)
+             AND json_extract(body, '$.created_at') >= ? AND json_extract(body, '$.created_at') <= ?
+             ORDER BY json_extract(body, '$.created_at') DESC, id DESC LIMIT ?`,
+            collection, new Date(from!).toISOString(), new Date(to!).toISOString(), maximum + 1,
+          ).toArray();
+      const limitResult = { n: 0, more: true, limited: true };
+      if (!batch && rows.length > maximum) return limitResult;
+      const selected: string[] = [];
+      let revisions = 0;
+      for (const row of rows.slice(0, maximum)) {
+        const changes = this.sql.exec<{ change_id: number }>(
+          `SELECT change_id FROM document_changes WHERE collection = ? AND id = ? LIMIT ?`,
+          collection, row.id, 129 - revisions,
+        ).toArray().length;
+        if (revisions + changes > 128) {
+          if (!batch || selected.length === 0) return limitResult;
+          break;
+        }
+        revisions += changes;
+        selected.push(row.id);
+      }
+      for (const id of selected) this.deleteDocumentById(collection, id);
+      return { n: selected.length, more: rows.length > selected.length, limited: false };
+    });
   }
 
   deleteDocumentById(collection: StoredDocumentCollectionName, id: string): boolean {

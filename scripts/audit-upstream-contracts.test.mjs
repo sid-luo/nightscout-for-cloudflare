@@ -101,56 +101,56 @@ test("the API3 overlay is anchored to all eight locked dynamic registrations", (
       suffix: "",
       source_file: "vendor/nightscout/lib/api3/generic/search/operation.js",
       handler_name: "searchOperation",
-      registration_line: 50,
+      registration_line: 48,
     },
     {
       method: "POST",
       suffix: "",
       source_file: "vendor/nightscout/lib/api3/generic/create/operation.js",
       handler_name: "createOperation",
-      registration_line: 53,
+      registration_line: 51,
     },
     {
       method: "GET",
       suffix: "/history",
       source_file: "vendor/nightscout/lib/api3/generic/history/operation.js",
       handler_name: "historyOperation",
-      registration_line: 56,
+      registration_line: 54,
     },
     {
       method: "GET",
       suffix: "/history/:lastModified",
       source_file: "vendor/nightscout/lib/api3/generic/history/operation.js",
       handler_name: "historyOperation",
-      registration_line: 59,
+      registration_line: 57,
     },
     {
       method: "GET",
       suffix: "/:identifier",
       source_file: "vendor/nightscout/lib/api3/generic/read/operation.js",
       handler_name: "readOperation",
-      registration_line: 62,
+      registration_line: 60,
     },
     {
       method: "PUT",
       suffix: "/:identifier",
       source_file: "vendor/nightscout/lib/api3/generic/update/operation.js",
       handler_name: "updateOperation",
-      registration_line: 65,
+      registration_line: 63,
     },
     {
       method: "PATCH",
       suffix: "/:identifier",
       source_file: "vendor/nightscout/lib/api3/generic/patch/operation.js",
       handler_name: "patchOperation",
-      registration_line: 68,
+      registration_line: 66,
     },
     {
       method: "DELETE",
       suffix: "/:identifier",
       source_file: "vendor/nightscout/lib/api3/generic/delete/operation.js",
       handler_name: "deleteOperation",
-      registration_line: 71,
+      registration_line: 69,
     },
   ]);
   assert.throws(
@@ -169,20 +169,20 @@ test("the API3 overlay is anchored to all eight locked dynamic registrations", (
   }
 });
 
-test("the locked repository manifest is stable and validates all 111 test files", () => {
+test("the locked repository manifest is stable and validates all 157 test files", () => {
   const first = buildManifest();
   const second = buildManifest();
   validateManifest(first);
-  assert.equal(first.routes.length, 161);
-  assert.equal(first.tests.length, 111);
+  assert.equal(first.routes.length, 163);
+  assert.equal(first.tests.length, 157);
   assert.equal(serializeManifest(first), serializeManifest(second));
-  assert.equal(first.tests.filter((item) => item.status === "pass").length, 16);
-  assert.equal(first.tests.filter((item) => item.status === "adapted").length, 86);
+  assert.equal(first.tests.filter((item) => item.status === "pass").length, 44);
+  assert.equal(first.tests.filter((item) => item.status === "adapted").length, 90);
   assert.deepEqual(first.statistics.tests_by_status, {
-    pass: 16,
-    adapted: 86,
+    pass: 44,
+    adapted: 90,
     "excluded-fixed-scope": 1,
-    unresolved: 8,
+    unresolved: 22,
   });
   for (const file of [
     "vendor/nightscout/tests/api.aaps-client.test.js",
@@ -268,7 +268,7 @@ test("the locked repository manifest is stable and validates all 111 test files"
   }
   for (const file of [
     "vendor/nightscout/tests/adminnotifies.test.js",
-    "vendor/nightscout/tests/admintools.test.js",
+    "vendor/nightscout/tests/admintools.modern.test.js",
     "vendor/nightscout/tests/boluswizardpreview.test.js",
     "vendor/nightscout/tests/cache-objectid-compat.test.js",
     "vendor/nightscout/tests/careportal.test.js",
@@ -276,9 +276,9 @@ test("the locked repository manifest is stable and validates all 111 test files"
     "vendor/nightscout/tests/errorcodes.test.js",
     "vendor/nightscout/tests/env.test.js",
     "vendor/nightscout/tests/expressextensions.test.js",
-    "vendor/nightscout/tests/hashauth.test.js",
+    "vendor/nightscout/tests/hashauth.modern.test.js",
     "vendor/nightscout/tests/mongo-pool-config.test.js",
-    "vendor/nightscout/tests/pluginbase.test.js",
+    "vendor/nightscout/tests/pluginbase.modern.test.js",
     "vendor/nightscout/tests/profileeditor.test.js",
     "vendor/nightscout/tests/reports.test.js",
     "vendor/nightscout/tests/reportstorage.test.js",
@@ -431,7 +431,7 @@ test("provenance records and validates deterministic syntactic mount chains", ()
   assert.deepEqual(versionRoute.mount_chain, [{
     kind: "express-mount",
     file: "vendor/nightscout/lib/server/app.js",
-    line: 249,
+    line: 294,
     mount_path: "/api/v3",
     anchor: "app.use('/api/v3', api3);",
   }]);
@@ -442,7 +442,7 @@ test("provenance records and validates deterministic syntactic mount chains", ()
     {
       kind: "express-mount",
       file: "vendor/nightscout/lib/server/app.js",
-      line: 248,
+      line: 293,
       mount_path: "/api/v2",
       anchor: "app.use('/api/v2', api2);",
     },
@@ -456,7 +456,7 @@ test("provenance records and validates deterministic syntactic mount chains", ()
     {
       kind: "express-mount",
       file: "vendor/nightscout/lib/api/index.js",
-      line: 47,
+      line: 45,
       mount_path: "/entries*",
       anchor: "app.all('/entries*', entriesRouter);",
     },
@@ -465,7 +465,7 @@ test("provenance records and validates deterministic syntactic mount chains", ()
   assert.ok(!v1Entries.mount_chain.some((entry) => entry.file.endsWith("/api2/index.js")));
   const v2Properties = manifest.routes.find((item) => item.method === "GET" && item.path === "/api/v2/properties");
   assert.deepEqual(v2Properties.mount_chain.map(({ file, line }) => ({ file, line })), [
-    { file: "vendor/nightscout/lib/server/app.js", line: 248 },
+    { file: "vendor/nightscout/lib/server/app.js", line: 293 },
     { file: "vendor/nightscout/lib/api2/index.js", line: 13 },
   ]);
 

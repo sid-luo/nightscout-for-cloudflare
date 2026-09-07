@@ -4,6 +4,11 @@
 
 [English](README.md) | **简体中文**
 
+> **独立测试分支：NSCF 1.3.0-beta.1 / Nightscout 15.0.8。**
+> 请使用独立 Worker、地址和数据空间，参照[测试说明](docs/testing/NIGHTSCOUT_15_0_8.md)。
+> 下方快速安装器和一键部署链接仍安装正式版。
+
+
 > ### 🚀 [打开快速安装器](https://ns.sidluo.com/)
 >
 > 无需 GitHub，无需命令行，直接部署到你自己的 Cloudflare 账号。
@@ -15,9 +20,9 @@
 Cloudflare。它在 Cloudflare 免费套餐额度内运行，不需要付费服务器或
 MongoDB 服务。它是独立的非官方移植版，不是 Nightscout 官方发布。
 
-Nightscout for Cloudflare 版本：**1.2.0**
+Nightscout for Cloudflare 版本：**1.3.0-beta.1**
 
-Nightscout 上游版本：**15.0.7**
+Nightscout 上游版本：**15.0.8**
 
 本项目保留官方 Nightscout 的页面、布局、图表、插件、翻译和计算逻辑，只增加
 Cloudflare 平台适配层。
@@ -61,8 +66,8 @@ Nightscout 是一个伟大的项目。作为多年的用户，我希望更多人
 Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 移植版本。Nightscout 上游版本和移植版本使用各自独立的版本号：
 
-- Nightscout 上游版本：**15.0.7**
-- Nightscout for Cloudflare 版本：**1.2.0**
+- Nightscout 上游版本：**15.0.8**
+- Nightscout for Cloudflare 版本：**1.3.0-beta.1**
 
 原版 Admin Tools 的对应功能仍然保留，但本项目使用 SQLite Durable Objects
 存储数据，而不是 MongoDB。因此，页面中的部分名称会调整为与实际存储方式无关

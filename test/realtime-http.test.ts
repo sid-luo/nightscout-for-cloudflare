@@ -198,7 +198,7 @@ describe("Engine.IO 3/4 polling HTTP adapter", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toMatch(/^(?:text|application)\/javascript/);
     const source = await response.text();
-    expect(source).toContain("Socket.IO v4.5.4");
+    expect(source).toContain("Socket.IO v4.8.3");
     expect(source).not.toContain("/api/v2/ddata/at");
   });
 
@@ -764,7 +764,7 @@ describe("Engine.IO 3/4 polling HTTP adapter", () => {
         dbstats: {},
         status: {
           status: "ok",
-          version: "15.0.7",
+          version: "15.0.8",
           versionNum: 150007,
         },
       }],

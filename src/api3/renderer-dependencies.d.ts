@@ -28,6 +28,7 @@ declare module "easyxml" {
     rootElement?: string;
     dateFormat?: "ISO" | "SQL" | "JS";
     manifest?: boolean;
+    attributePrefix?: string | false;
   }
 
   export default class EasyXml {

@@ -1934,10 +1934,11 @@ describe("API v3 treatments vertical slice", () => {
       jwt,
       "/api/v3/treatments/invalid-xml-attribute.xml",
     );
-    expect(invalidXml.status).toBe(500);
+    // 15.0.8 treats underscore-prefixed fields as XML elements, not attributes.
+    expect(invalidXml.status).toBe(200);
     expect(invalidXml.headers.get("Content-Type")).toBe("application/xml; charset=utf-8");
     expect(invalidXml.headers.get("Vary")).toBe("Accept");
-    expect(await invalidXml.text()).toBe('{"status":500,"message":"Database error"}');
+    expect(await invalidXml.text()).toContain("<_bad>\n    <x>1</x>\n  </_bad>");
 
     const searchXml = await api3Fetch(
       name,

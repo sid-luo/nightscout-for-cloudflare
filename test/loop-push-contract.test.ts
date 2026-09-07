@@ -339,3 +339,13 @@ describe("/api/v2/notifications/loop route", () => {
     expect(response.status).toBe(404);
   });
 });
+
+
+it("prefers explicit profile APNS production flags over the environment", () => {
+  for (const isAPNSProduction of [true, false]) {
+    const prepared = prepareLoopPush({ eventType: "Temporary Override Cancel" }, "ip",
+      [{ ...PROFILES[0], isAPNSProduction }],
+      { ...ENVIRONMENT, pushServerEnvironment: isAPNSProduction ? "sandbox" : "production" }, NOW);
+    expect(prepared.production).toBe(isAPNSProduction);
+  }
+});

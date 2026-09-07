@@ -1227,7 +1227,7 @@ function renderMarkdown(manifest) {
   }
   lines.push(
     "",
-    "The check command also rejects duplicate method/path pairs, locked registration-source hash drift, static/dynamic overlay drift, unknown auth/condition/status override targets, mount-chain or exact source-anchor drift, an upstream test count other than 111, unknown statuses, stale generated output, and nondeterministic ordering.",
+    "The check command also rejects duplicate method/path pairs, locked registration-source hash drift, static/dynamic overlay drift, unknown auth/condition/status override targets, mount-chain or exact source-anchor drift, an upstream test count different from the reviewed expected_test_count, unknown statuses, stale generated output, and nondeterministic ordering.",
     "",
     "`mount_chain` records re-derived syntactic assembly anchors, not a complete runtime call graph. Registration and handler locations are exact local source anchors; none of these fields prove reachability, middleware order, execution, or coverage.",
     "",

@@ -110,6 +110,15 @@ These variables only provide browser defaults. They do not make the Worker
 fetch the URLs in the background and do not create scheduled tasks or
 database writes.
 
+### Framing protection (15.0.8)
+
+`ALLOW_UNRESTRICTED_FRAME_EMBEDDING` defaults to `true`, matching upstream
+15.0.8. Set `false` or `off` to send `X-Frame-Options: SAMEORIGIN` and the enforced
+CSP `frame-ancestors 'self'`. `true`/`on`, missing and invalid values preserve the
+compatibility default. This controls who may embed this instance; `FRAME_URL_n`
+independently controls what the Split View loads. The broader `SECURE_CSP*`
+server settings remain outside this Workers adapter.
+
 ## Feature switches
 
 | Variable | Default | Purpose |

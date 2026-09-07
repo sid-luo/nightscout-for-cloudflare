@@ -4,21 +4,22 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import vm from "node:vm";
+import { createRequire } from "node:module";
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname;
-const LOCKED_COMMIT = "7e0e77f88fc113a76fe363504125f5b36b8a3fe3";
+const LOCKED_COMMIT = "92d0834219aa771b5837dbcbf1baeb839a200cf6";
 const LOCKED_FILES = new Map([
-  ["vendor/nightscout/lib/authorization/storage.js", "46ac790de4e76f06a5bc56a2d15f00261b5b89a7910a88752ce96fbe256b52ca"],
-  ["vendor/nightscout/lib/authorization/index.js", "edac0ec0078551555b0c1203ed8a5496834d8f8b32c33729f0746bafc75e3729"],
-  ["vendor/nightscout/lib/authorization/endpoints.js", "bb2c06500af6476f5d682384bd0bd29ad878a34f2ccde1e4b079d487b02a8b99"],
-  ["vendor/nightscout/lib/authorization/delaylist.js", "9988fe88e2ca0bb3b7168d07f6041115352388658124a31b6993ee40a9e0c03d"],
+  ["vendor/nightscout/lib/authorization/storage.js", "035f43cf90b1c6bfda176c098a278c2fb84b5b3d47ed55888face5dfb8fa81d5"],
+  ["vendor/nightscout/lib/authorization/index.js", "aad771fc9f72edba6bc05916beada477a41775cb1cb88ec48495e52413348e22"],
+  ["vendor/nightscout/lib/authorization/endpoints.js", "d6554af412833b0e3bf689dd0a6ea43a18b7ef8d4af9443dee8fda05c5c0d32a"],
+  ["vendor/nightscout/lib/authorization/delaylist.js", "532ac0827177912e4cb06c003869affceb97216bc4a583f1cb2cc0bc4438f80b"],
   ["vendor/nightscout/lib/api/verifyauth.js", "adb5b9edbce174fd02c3431fdf9d386270e286662bb80db1f673f6e6e349ff73"],
-  ["vendor/nightscout/lib/server/enclave.js", "4581512456ef3138b8e8ac78020efc2a3f9ce626013b4fc6b188f9802e5aca68"],
-  ["vendor/nightscout/tests/api.security.test.js", "ac9abc009f899100d332be69831cb99ccf4ef233da8f8a047a7bd54e69b14995"],
+  ["vendor/nightscout/lib/server/enclave.js", "3c0c512e595a7a1cb24a1d109238459e9f1aa2a00fd0dc977db439367bfff13d"],
+  ["vendor/nightscout/tests/api.security.test.js", "ccb58765fb0ad38e9b0ada9e6722b37a7c116d3b926c1749a9fe74c24436df25"],
   ["vendor/nightscout/tests/api.verifyauth.test.js", "d54c3042c51b28a52deb12e16b1e829a241a820755c6620845ddf7c6205f769d"],
-  ["vendor/nightscout/tests/hashauth.test.js", "13fbccbfa1847262046f98cfa9ae0b395498ccec0fbe4733f4513fe71e512b3f"],
+  ["vendor/nightscout/tests/hashauth.modern.test.js", "2cd8e69fa0a86e7e7a9cab21432dad36a6baab83e551af4fe66259bbee1531c2"],
   ["vendor/nightscout/tests/identity-matrix.test.js", "f1189c3e7673ab3db5af85ef45be429f2867cfe2d1e09f9751e52f8b927c3215"],
-  ["vendor/nightscout/tests/security.test.js", "ff3c42f774204f7ec49a6428f02f5b4fde169aa3a1cbf966d8a3a730eaba6355"],
+  ["vendor/nightscout/tests/security.test.js", "6bc8a191c39116915a36dc818b93dd772ce03c190bc26fcb665fff14e8613e61"],
   ["vendor/nightscout/tests/verifyauth.test.js", "715dc67da0ed94ecf3cea629cf7b42f7a545a6d25323e0d28dfe8a8a888da003"],
 ]);
 
@@ -32,6 +33,7 @@ function sha1(value) {
 
 function loadLockedStorage() {
   const module = { exports: {} };
+  const upstreamRequire = createRequire(join(REPO_ROOT, "vendor/nightscout/package.json"));
   const lodash = {
     last(values) {
       return values.at(-1);
@@ -45,7 +47,10 @@ function loadLockedStorage() {
   };
   const require = (specifier) => {
     if (specifier === "lodash") return lodash;
-    if (specifier === "crypto") return { createHash };
+    if (specifier === "crypto" || specifier === "node:crypto") return { createHash };
+    if (specifier === "../utils") return () => upstreamRequire("./lib/utils")({
+      moment: upstreamRequire("moment-timezone"), settings: {}, language: { translate: (text) => text },
+    });
     if (specifier === "shiro-trie") return { new: () => ({ add() {} }) };
     if (specifier === "mongodb") return { ObjectId: class ObjectId {} };
     if (specifier === "../storage/run-with-callback") {
@@ -108,9 +113,9 @@ function loadLockedDelayList(now) {
   return module.exports({ settings: { authFailDelay: 50 } });
 }
 
-test("authorization audit is pinned to the exact v15.0.7 commit and source/test bytes", () => {
+test("authorization audit is pinned to the exact v15.0.8 commit and source/test bytes", () => {
   const manifest = JSON.parse(source("upstream/manifest.json"));
-  assert.equal(manifest.release, "v15.0.7");
+  assert.equal(manifest.release, "v15.0.8");
   assert.equal(manifest.commit, LOCKED_COMMIT);
   for (const [relativePath, expected] of LOCKED_FILES) {
     const actual = createHash("sha256").update(source(relativePath)).digest("hex");

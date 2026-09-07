@@ -109,7 +109,7 @@ describe("synthetic device-status read amplification", () => {
         {
           "label": "upload-no-browser",
           "reads": 14,
-          "writes": 14,
+          "writes": 15,
         },
         {
           "label": "browser-connect",
@@ -119,11 +119,12 @@ describe("synthetic device-status read amplification", () => {
         {
           "label": "upload-with-browser",
           "reads": 41,
-          "writes": 15,
+          "writes": 16,
         },
       ]
     `);
-    expect(measurements[2]!.writes).toBe(15);
+    // One additional index row supports bounded created_at cleanup (15.0.8).
+    expect(measurements[2]!.writes).toBe(16);
     for (const measurement of measurements) {
       expect(measurement.reads).toBeGreaterThan(0);
       expect(measurement.writes).toBeGreaterThan(0);

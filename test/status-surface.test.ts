@@ -918,7 +918,7 @@ describe("v1/v2 status representations", () => {
       expect(json.headers.get("Vary")).toBe("Accept");
       expect(await json.json()).toMatchObject({
         status: "ok",
-        version: "15.0.7",
+        version: "15.0.8",
         authorized: null,
       });
     }

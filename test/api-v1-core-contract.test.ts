@@ -54,7 +54,7 @@ describe("locked root and v1/v2 Status upstream contracts", () => {
     expect(versions).toEqual([
       { version: "1.0.0", url: "/api/v1" },
       { version: "2.0.0", url: "/api/v2" },
-      { version: "3.0.3-alpha", url: "/api/v3" },
+      { version: "3.0.5", url: "/api/v3" },
     ]);
     for (const version of versions) {
       expect(Object.keys(version).sort()).toEqual(["url", "version"]);

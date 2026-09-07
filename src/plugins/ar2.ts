@@ -98,8 +98,8 @@ function canForecast(
   context: { bgnow: RealtimeDocument; delta: RealtimeDocument | null },
 ): context is { bgnow: RealtimeDocument; delta: RealtimeDocument } {
   return Number(context.bgnow.mean) >= BG_MINIMUM
-    && Boolean(context.delta?.mean5MinsAgo)
-    && typeof context.delta?.mean5MinsAgo === "number";
+    && typeof context.delta?.mean5MinsAgo === "number"
+    && !Number.isNaN(context.delta.mean5MinsAgo);
 }
 
 function initializeAr2(

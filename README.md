@@ -4,6 +4,11 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
+> **Testing branch — NSCF 1.3.0-beta.1 / Nightscout 15.0.8.**
+> Use an isolated Worker and data namespace. [Testing instructions](docs/testing/NIGHTSCOUT_15_0_8.md).
+> The web installer and one-click links below still install the stable release.
+
+
 > ### 🚀 [Open the web installer](https://nscf.sidluo.com/)
 >
 > No GitHub. No command line. Deploy directly to your own Cloudflare account.
@@ -16,9 +21,9 @@ It runs within Cloudflare's free-plan limits without a paid server or MongoDB
 service. It is an independent, unofficial port—not an official Nightscout
 release.
 
-Nightscout for Cloudflare version: **1.2.0**
+Nightscout for Cloudflare version: **1.3.0-beta.1**
 
-Upstream Nightscout version: **15.0.7**
+Upstream Nightscout version: **15.0.8**
 
 This project preserves the official Nightscout pages, layout, charts, plugins,
 translations and calculations, adding only the Cloudflare platform adapter.
@@ -64,8 +69,8 @@ Nightscout for Cloudflare is an independent, unofficial Cloudflare port of
 Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
-- Nightscout upstream version: **15.0.7**
-- Nightscout for Cloudflare version: **1.2.0**
+- Nightscout upstream version: **15.0.8**
+- Nightscout for Cloudflare version: **1.3.0-beta.1**
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible

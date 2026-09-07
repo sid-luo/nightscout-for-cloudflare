@@ -402,7 +402,12 @@ async function replaceTreatment(
   identifier: string,
   collection: Api3CollectionName,
 ): Promise<Response> {
-  const document = parseApi3Document(await readJsonBody(request));
+  const body = await readJsonBody(request);
+  if (body && typeof body === "object" && Object.keys(body).length > 0
+    && !allowed(authorization, collection, "create") && !allowed(authorization, collection, "update")) {
+    return forbidden(collection, "update");
+  }
+  const document = parseApi3Document(body);
   normalizeApi3Date(document);
   await resolveApi3Identifier(document);
   document.identifier = identifier;

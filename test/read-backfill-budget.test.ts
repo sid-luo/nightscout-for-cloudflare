@@ -77,7 +77,7 @@ describe("complete synthetic API3 device-status backfill", () => {
       {
         "reads": 410098,
         "uploaded": 10000,
-        "writes": 150001,
+        "writes": 160001,
       }
     `);
   }, 120_000);

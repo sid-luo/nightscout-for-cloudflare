@@ -424,16 +424,22 @@ export function openApsVisualization(
 
   if (property.status.code === "enacted" && property.lastEnacted !== null) {
     const enacted = property.lastEnacted;
-    const canceled = enacted.rate === 0 && enacted.duration === 0;
-    let parts = [
-      valueString("BG: ", displayBg(enacted.bg)),
-      `, <b>Temp Basal${canceled ? " Canceled" : " Started"}</b>`,
-      canceled ? "" : ` ${Number(enacted.rate).toFixed(2)} for ${String(enacted.duration)}m`,
+    const rate = Number(enacted.rate);
+    const duration = Number(enacted.duration);
+    const hasDetails = enacted.rate !== undefined && enacted.rate !== null && enacted.rate !== ""
+      && Number.isFinite(rate) && enacted.duration !== undefined && enacted.duration !== null
+      && enacted.duration !== "" && Number.isFinite(duration);
+    const canceled = hasDetails && rate === 0 && duration === 0;
+    let parts = [valueString("BG: ", displayBg(enacted.bg))];
+    if (hasDetails) {
+      parts.push(`, <b>Temp Basal${canceled ? " Canceled" : " Started"}</b>`);
+      if (!canceled) parts.push(` ${rate.toFixed(2)} for ${duration}m`);
+    }
+    parts.push(
       valueString(", ", enacted.reason),
       enacted.mealAssist && selected.includes("meal-assist")
-        ? ` <b>Meal Assist:</b> ${String(enacted.mealAssist)}`
-        : "",
-    ];
+        ? ` <b>Meal Assist:</b> ${String(enacted.mealAssist)}` : "",
+    );
     if (
       property.lastSuggested !== null &&
       dateMills(property.lastSuggested.moment) > dateMills(enacted.moment)

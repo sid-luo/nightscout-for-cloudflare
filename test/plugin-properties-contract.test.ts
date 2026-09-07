@@ -138,3 +138,9 @@ describe("locked Nightscout direction.test.js property plugin", () => {
     }
   });
 });
+
+it("normalizes legacy direction names and separators", () => {
+  for (const [direction, value] of [["up", "SingleUp"], ["slide_down", "FortyFiveDown"], ["double-up", "DoubleUp"], ["NOT COMPUTABLE", "NOT COMPUTABLE"]]) {
+    expect(nightscoutDirectionInfo({ mills: Date.now(), direction }).value).toBe(value);
+  }
+});
