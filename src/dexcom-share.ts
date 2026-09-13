@@ -2,7 +2,7 @@ import { parseEntryPayload, type ValidatedEntry } from "./model";
 
 const DEXCOM_APPLICATION_ID = "d89443d2-327c-4a6f-89e5-496bbb0317db";
 const DEXCOM_USER_AGENT =
-  'nightscout-connect, nightscout-connect@0.0.12, "Dexcom Share", https://github.com/nightscout/nightscout-connect';
+  'nightscout-connect, nightscout-connect@0.0.13, "Dexcom Share", https://github.com/nightscout/nightscout-connect';
 const DEXCOM_TIMEOUT_MS = 15_000;
 const DEXCOM_MAX_RESPONSE_BYTES = 256 * 1_024;
 const DEXCOM_MAX_RECORDS = 576;
@@ -36,7 +36,8 @@ export type DexcomShareConfigurationError =
   | "missing_source"
   | "unsupported_source"
   | "missing_credentials"
-  | "unsupported_region";
+  | "unsupported_region"
+  | "invalid_server";
 
 export interface DexcomShareEnvironment {
   ENABLE?: string;
@@ -44,6 +45,16 @@ export interface DexcomShareEnvironment {
   CONNECT_SHARE_ACCOUNT_NAME?: string;
   CONNECT_SHARE_PASSWORD?: string;
   CONNECT_SHARE_REGION?: string;
+  CONNECT_SHARE_SERVER?: string;
+  BRIDGE_USER_NAME?: string;
+  BRIDGE_PASSWORD?: string;
+  BRIDGE_SERVER?: string;
+  BRIDGE_USE_LEGACY?: string;
+  BRIDGE_DEXCOM_BRIDGE_USE_LEGACY?: string;
+  DEXCOM_BRIDGE_USE_LEGACY?: string;
+  CUSTOMCONNSTR_DEXCOM_BRIDGE_USE_LEGACY?: string;
+  BRIDGE_INTERVAL?: string;
+  BRIDGE_MINUTES?: string;
 }
 
 export type DexcomShareConfig =
@@ -63,6 +74,9 @@ export type DexcomShareConfig =
       baseUrl: string;
       accountName: string;
       password: string;
+      bridgeMode?: "migrated" | "legacy";
+      legacyInterval?: number;
+      legacyMinutes?: number;
     };
 
 export type DexcomShareErrorCode =
@@ -125,7 +139,7 @@ interface DexcomShareEntry {
   dateString: string;
   trend: number;
   direction: string;
-  device: "nightscout-connect";
+  device: "nightscout-connect" | "share2";
   type: "sgv";
 }
 
@@ -153,10 +167,14 @@ function enabledFeatures(value: string | undefined): Set<string> {
 export function resolveDexcomShareConfig(
   env: DexcomShareEnvironment,
 ): DexcomShareConfig {
-  if (!enabledFeatures(env.ENABLE).has("connect")) {
+  const bridge = Boolean(env.BRIDGE_USER_NAME && env.BRIDGE_PASSWORD);
+  const legacy = bridge && [env.BRIDGE_USE_LEGACY, env.BRIDGE_DEXCOM_BRIDGE_USE_LEGACY,
+    env.DEXCOM_BRIDGE_USE_LEGACY, env.CUSTOMCONNSTR_DEXCOM_BRIDGE_USE_LEGACY]
+    .some(value => value?.toLowerCase() === "true");
+  if (!enabledFeatures(env.ENABLE).has("connect") && !bridge) {
     return { enabled: false, state: "disabled" };
   }
-  const source = env.CONNECT_SOURCE?.trim().toLowerCase();
+  const source = legacy ? "dexcomshare" : env.CONNECT_SOURCE?.trim().toLowerCase() || (bridge ? "dexcomshare" : "");
   if (source === undefined || source.length === 0) {
     return {
       enabled: false,
@@ -171,8 +189,8 @@ export function resolveDexcomShareConfig(
       error: "unsupported_source",
     };
   }
-  const accountName = env.CONNECT_SHARE_ACCOUNT_NAME?.trim() ?? "";
-  const password = env.CONNECT_SHARE_PASSWORD ?? "";
+  const accountName = (legacy ? env.BRIDGE_USER_NAME : env.CONNECT_SHARE_ACCOUNT_NAME || env.BRIDGE_USER_NAME)?.trim() ?? "";
+  const password = (legacy ? env.BRIDGE_PASSWORD : env.CONNECT_SHARE_PASSWORD || env.BRIDGE_PASSWORD) ?? "";
   if (
     accountName.length === 0
     || accountName.length > 1_024
@@ -185,7 +203,8 @@ export function resolveDexcomShareConfig(
       error: "missing_credentials",
     };
   }
-  const rawRegion = env.CONNECT_SHARE_REGION?.trim().toLowerCase() || "us";
+  const bridgeServer = (!env.CONNECT_SHARE_REGION && !env.CONNECT_SHARE_SERVER || legacy) ? env.BRIDGE_SERVER : undefined;
+  const rawRegion = (!legacy && env.CONNECT_SHARE_REGION?.trim().toLowerCase()) || (bridgeServer?.toUpperCase() === "EU" ? "ous" : "us");
   if (rawRegion !== "us" && rawRegion !== "ous") {
     return {
       enabled: false,
@@ -193,13 +212,29 @@ export function resolveDexcomShareConfig(
       error: "unsupported_region",
     };
   }
+  const server = legacy ? bridgeServer : env.CONNECT_SHARE_SERVER || bridgeServer;
+  let baseUrl: string = DEXCOM_HOSTS[rawRegion];
+  if (server && server.toUpperCase() !== "EU") {
+    // A host only, as in upstream CONNECT_SHARE_SERVER. No URL credentials,
+    // path or scheme may redirect a configured Dexcom password elsewhere.
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(server)) {
+      return { enabled: false, state: "configuration_error", error: "invalid_server" };
+    }
+    baseUrl = `https://${server.toLowerCase()}`;
+  }
+  const interval = Number(env.BRIDGE_INTERVAL) || 156_000;
   return {
     enabled: true,
     source: "dexcomshare",
     region: rawRegion,
-    baseUrl: DEXCOM_HOSTS[rawRegion],
+    baseUrl,
     accountName,
     password,
+    ...(bridge ? { bridgeMode: legacy ? "legacy" as const : "migrated" as const } : {}),
+    ...(legacy ? {
+      legacyInterval: interval >= 1_000 && interval <= 300_000 ? interval : 156_000,
+      legacyMinutes: Math.max(5, Math.min(2880, Number(env.BRIDGE_MINUTES) || 1440)),
+    } : {}),
   };
 }
 
@@ -279,7 +314,7 @@ export async function dexcomShareConfigFingerprint(
   config: Extract<DexcomShareConfig, { enabled: true }>,
 ): Promise<string> {
   const bytes = new TextEncoder().encode(
-    `${config.region}\0${config.accountName}\0${config.password}`,
+    JSON.stringify(config),
   );
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)]
@@ -490,9 +525,10 @@ export class DexcomShareClient {
         headers: {
           "Accept": "application/json",
           "Content-Type": "application/json",
-          "User-Agent": DEXCOM_USER_AGENT,
+          "User-Agent": this.config.bridgeMode === "legacy" ? "share2nightscout-bridge/0.2.12" : DEXCOM_USER_AGENT,
         },
-        body: JSON.stringify(body),
+        body: phase === "read" && this.config.bridgeMode === "legacy" ? "" : JSON.stringify(body),
+        redirect: "manual",
         signal: controller.signal,
       });
       // Keep the timeout active until the bounded response body is consumed.
@@ -541,7 +577,7 @@ export class DexcomShareClient {
   }
 
   async createSession(now: number): Promise<DexcomSession> {
-    const application = { applicationId: DEXCOM_APPLICATION_ID };
+    const application: Record<string, string> = this.config.bridgeMode === "legacy" ? {} : { applicationId: DEXCOM_APPLICATION_ID };
     const accountId = requiredAccountId(await this.post(
       "/ShareWebServices/Services/General/AuthenticatePublisherAccount",
       application,
@@ -584,7 +620,10 @@ export class DexcomShareClient {
     if (!Array.isArray(value) || value.length > DEXCOM_MAX_RECORDS) {
       throw new DexcomShareError("protocol_error");
     }
-    return value.map(mapDexcomShareGlucose);
+    return value.map(item => {
+      const entry = mapDexcomShareGlucose(item);
+      return this.config.bridgeMode === "legacy" ? { ...entry, device: "share2" } : entry;
+    });
   }
 }
 
@@ -618,7 +657,7 @@ export async function runDexcomShareCycle(options: {
     ? options.now
     : Date.now();
   const client = new DexcomShareClient(options.config, options.fetcher ?? fetch);
-  let session: DexcomSession | null = options.state.sessionId !== null
+  let session: DexcomSession | null = options.config.bridgeMode !== "legacy" && options.state.sessionId !== null
       && options.state.sessionCreatedAt !== null
       && now - options.state.sessionCreatedAt < DEXCOM_SESSION_REFRESH_MS
     ? { id: options.state.sessionId, createdAt: options.state.sessionCreatedAt }
@@ -628,7 +667,7 @@ export async function runDexcomShareCycle(options: {
     const highWater = Math.max(
       options.state.lastEntryAt ?? 0,
       options.latestLocalEntryAt ?? 0,
-      now - DEXCOM_MAX_LOOKBACK_MS,
+      now - (options.config.bridgeMode === "legacy" ? options.config.legacyMinutes! * 60_000 : DEXCOM_MAX_LOOKBACK_MS),
     );
     const maxCount = Math.max(1, Math.min(
       DEXCOM_MAX_RECORDS,
@@ -676,7 +715,7 @@ export async function runDexcomShareCycle(options: {
       consecutiveFailures: 0,
       lastErrorCode: null,
     };
-    const nextDueAt = nextSuccessDueAt(
+    const nextDueAt = options.config.bridgeMode === "legacy" ? now + options.config.legacyInterval! : nextSuccessDueAt(
       now,
       newestSchedulable ?? highWater,
     );

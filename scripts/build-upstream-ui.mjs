@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ejs from "ejs";
+import { buildReportAdapter, patchCandles } from "./report-adapter-source.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
@@ -39,6 +40,9 @@ const socketTenantAdapterPath = path.join(
 );
 const socketTenantAdapter = await readFile(socketTenantAdapterPath, "utf8");
 const maintenanceAdapter = await readFile(path.join(projectRoot, "platform", "admin-maintenance.js"), "utf8");
+const reportAdapter = await buildReportAdapter();
+const reportCandles = patchCandles(await readFile(path.join(vendorRoot, "static/report/js/flotcandle.js"), "utf8"));
+const reportCachebuster = createHash("sha256").update(reportAdapter).digest("hex").slice(0, 12);
 const maintenanceCachebuster = createHash("sha256").update(maintenanceAdapter).digest("hex").slice(0, 12);
 const socketClientCachebuster = createHash("sha256")
   .update(socketClient)
@@ -52,6 +56,8 @@ const transportCachebuster = createHash("sha256")
   .update(socketClient)
   .update(socketTenantAdapter)
   .update(maintenanceAdapter)
+  .update(reportAdapter)
+  .update(reportCandles)
   .digest("hex")
   .slice(0, 12);
 const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${transportCachebuster}`;
@@ -98,6 +104,12 @@ function applyPlatformAssetVersions(html) {
 }
 
 function applyPageAdapters(html, type) {
+  if (type === "report") {
+    return html.replace('<script src="/report/js/flotcandle.js"></script>',
+      `<script src="/report/js/flotcandle.js?${cachebuster}"></script>`)
+      .replace('<script src="/js/reportinit.js"></script>',
+      `<script src="/platform/report-adapter.js?${reportCachebuster}"></script>\n  <script src="/js/reportinit.js"></script>`);
+  }
   if (type === "index") {
     const projectAbout = `
         <div id="nscf-about">
@@ -143,6 +155,7 @@ await rm(publicRoot, { recursive: true, force: true });
 await mkdir(publicRoot, { recursive: true });
 
 await cp(path.join(vendorRoot, "static"), publicRoot, { recursive: true });
+await writeFile(path.join(publicRoot, "report/js/flotcandle.js"), reportCandles);
 await cp(path.join(vendorRoot, "translations"), path.join(publicRoot, "translations"), {
   recursive: true,
 });
@@ -154,6 +167,8 @@ await cp(
   path.join(publicRoot, "translations", "sl_SL.json"),
 );
 await cp(upstreamBundleRoot, path.join(publicRoot, "bundle"), { recursive: true });
+await mkdir(path.join(publicRoot, "platform"), { recursive: true });
+await writeFile(path.join(publicRoot, "platform", "report-adapter.js"), reportAdapter);
 
 const officialPages = [
   { view: "index.html", output: "index.html", title: "", type: "index" },

@@ -106,7 +106,10 @@ SHOW_FORECAST=openaps
 设为 `false` 或 `off` 后，返回 `X-Frame-Options: SAMEORIGIN` 和强制生效的
 CSP `frame-ancestors 'self'`，只允许同源网页嵌入。`true`／`on`、未设置或
 无效值保留兼容默认值。它控制哪些网页能嵌入本站；`FRAME_URL_n` 独立控制
-本站分屏页面加载什么内容。更广泛的 `SECURE_CSP*` 服务器配置仍不属于本移植范围。
+本站分屏页面加载什么内容。`SECURE_CSP=true`／`on` 启用官方风格 CSP；
+`SECURE_CSP_REPORT_ONLY=true`／`on` 仅报告，同时单独设置的同源嵌入限制仍强制生效。
+`frame-src` 包含本站及 `FRAME_URL_1`…`8` 中合法的 HTTP(S) 来源，不包含密码、查询参数
+或非 HTTP 地址。`/report-violation` 返回 204，不保存或记录可能含私密 URL 的报告。
 
 ## 功能开关
 
@@ -385,8 +388,7 @@ SHOW_FORECAST=loop
 ## Dexcom Share（Beta）
 
 Dexcom Share Connector 默认关闭，并使用独立 Durable Object 和 alarm 拉取
-数据。当前只支持 `dexcomshare`，不支持把原版 Nightscout 文档中的其他
-`CONNECT_SOURCE` 直接照搬过来。
+数据。此测试版根据 nightscout-connect 0.0.13 适配 Dexcom 协议；新增数据源见后文。
 
 配置：
 
@@ -416,6 +418,86 @@ Connector 会通过独立 alarm 定时运行。
 - 单次响应和回看时间受到 Workers 安全边界限制；
 - 可以通过受 Admin 权限保护的 `/_nscf/connect/status` 查看状态；
 - 模拟协议测试已经覆盖，但真实 Dexcom Share 账号仍应自行验收。
+
+## 新增数据源与 Webhook（1.3 测试版）
+
+新增功能默认关闭。账号、密码、带 token 的来源地址及来源 API Secret 应存入 Cloudflare
+Secrets，不写入 Git。全局接入配置只作用于默认数据集 `demo`。部署后打开一次 `/`、
+`/admin/` 或已认证的 `/_nscf/connect/status` 启动所选来源，随后独立 DO 定时运行。
+
+### 旧 BRIDGE 配置
+
+完整的 `BRIDGE_USER_NAME` 和 `BRIDGE_PASSWORD` 会自动启用 Dexcom 接入。
+`BRIDGE_SERVER=EU` 转为 `ous`，主机名则作为 HTTPS 服务地址。已有 `CONNECT_SHARE_*`
+配置优先，显式指定的其他 `CONNECT_SOURCE` 不会被覆盖。`CONNECT_SHARE_SERVER`
+接收不含协议、路径或账号的主机名。
+
+`DEXCOM_BRIDGE_USE_LEGACY=true` 启用旧桥请求格式、每轮重新登录与 `share2` 数据来源标记；
+同时接受 `BRIDGE_USE_LEGACY`、`BRIDGE_DEXCOM_BRIDGE_USE_LEGACY`、
+`CUSTOMCONNSTR_DEXCOM_BRIDGE_USE_LEGACY`。`BRIDGE_INTERVAL` 默认 156000 毫秒，
+接受官方 1000–300000 范围；`BRIDGE_MINUTES` 默认 1440，限制为 5–2880。
+这是 Workers 协议适配，使用持久化定时任务与退避，不运行 Node 桥进程。
+
+### Nightscout 来源
+
+设置 `ENABLE=connect`、`CONNECT_SOURCE=nightscout` 与 HTTPS 的
+`CONNECT_SOURCE_ENDPOINT`。地址中的 `?token=...` 会换取短期 bearer；否则可提供
+`CONNECT_SOURCE_API_SECRET`，发送其 SHA-1 摘要；两者均无则来源必须允许读取。
+本适配不会在远端新建授权主体。
+
+`CONNECT_SOURCE_COLLECTIONS` 默认 `entries,treatments,devicestatus,profiles`，
+可选其子集。`CONNECT_SOURCE_MAX_COUNT` 默认 1000，接受 1–10000；Workers 每轮每个集合
+最多读 100 条，较小配置可进一步缩小批次，其余数据在后续五分钟周期续读。
+官方 V1 不支持 skip，故按时间与 `_id` 续读，覆盖同一时间戳的多条记录。
+全部批次写入成功后才推进集合游标；确定性 ID 使部分失败后的重放不会重复新增。
+首次接入读取最近两天的血糖/治疗/设备状态，Profile 按生效日期扫描并定期重扫修改。
+导入 ID 按来源隔离，不镜像远端删除。
+
+### LibreLinkUp
+
+设置 `CONNECT_SOURCE=linkup`（别名 `librelinkup`）、`CONNECT_LINK_UP_USERNAME`、
+`CONNECT_LINK_UP_PASSWORD`。`CONNECT_LINK_UP_REGION` 默认 EU，支持
+AE/AP/AU/CA/DE/EU/EU2/FR/JP/US；`CONNECT_LINK_UP_SERVER` 可指定主机。
+`CONNECT_LINK_UP_VERSION` 默认 4.7.0，`CONNECT_LINK_UP_PRODUCT` 默认 llu.ios，
+`CONNECT_LINK_UP_INTERVAL` 默认 5 分钟（1–60）。多个患者连接时必须通过
+`CONNECT_LINK_UP_PATIENT_ID` 选定，歧义或不匹配会停止，避免混入其他患者数据。
+接受一次白名单地区重定向提示，合并历史图表与当前血糖并按时间去重；无时区的
+FactoryTimestamp 按 UTC 解析。
+
+### Glooko
+
+设置 `CONNECT_SOURCE=glooko`、`CONNECT_GLOOKO_EMAIL`、`CONNECT_GLOOKO_PASSWORD`。
+`CONNECT_GLOOKO_ENV` 可为 default/development/production/eu/ca；
+`CONNECT_GLOOKO_SERVER`、`CONNECT_GLOOKO_WEB_ORIGIN` 可覆盖地址。
+`CONNECT_GLOOKO_AUTH_MODE` 默认 api，可选 web、auto；auto 只在 API 返回 422 时
+尝试网页登录。网页登录处理 CSRF 和会话 Cookie；需要二次验证时返回
+`two_factor_required`，不绕过交互式 2FA。
+`CONNECT_GLOOKO_DEVICE_ID` 与 `CONNECT_GLOOKO_SERIAL_NUMBER` 可设置设备标识。
+
+V2 导入 CGM、普通餐时剂量和计划基础率。`CONNECT_GLOOKO_USE_V3_GRAPH=true`
+在 V2 血糖为空时尝试 V3 图表，并读取 Profile 单位。
+`CONNECT_GLOOKO_TIMEZONE_OFFSET` 为小时，默认 0，按官方方式从来源时间中减去。
+显式处理 mg/dl ×100、mmol/L 图表值和基础率的秒转分钟。数据窗口最多两天，
+V2 每个端点最多请求 1000 条，不是无限历史导入器。
+Glooko/LibreLinkUp 使用持久化内容摘要去重并重读有限窗口，不假定其接口支持 V1 分页。
+
+### Webhook
+
+在 `ENABLE` 中加入 `webhook`，设置 `WEBHOOK_HOST` 为远端主机；其余默认值为
+`WEBHOOK_PROTOCOL=https`、`WEBHOOK_PORT=443`、`WEBHOOK_PATH=/nightscout`。
+Cloudflare 没有本地 Node 接收器，必须明确配置 HTTPS 目标。发送内容仅为
+`{source:"nightscout",mgdl,mills,iso}`。
+
+首次观察到的血糖只建立持久化基线，不发送；新时间戳进入持久化队列，只有 2xx 才确认成功，
+错误/超时会退避重试，HTTP 五秒超时包含响应体。发送未完成时，后续观察值合并为一条最新待发值。
+这是至少一次投递：远端接收成功后、写回本地状态前中断，可能重复请求；接收方可用稳定的
+`Idempotency-Key` 去重。重启保留状态，旧时间戳不重发，关闭或修改目标取消旧队列。
+已认证管理员可查看 `/_nscf/webhook/status`，其中不包含血糖载荷或密钥。
+共享测试站未配置真实接收器。
+
+来源响应上限 2 MiB、15 秒，不跟随携带凭据的 HTTP 重定向；存储按最多 100 条分批。
+开启定时接入会增加资源用量。协议与持久化已有模拟验证，真实账号可用性仍需账户所有者验收。
+完整英文参数说明见[英文配置说明](CONFIGURATION.md#additional-connectors-and-webhook-13-beta)。
 
 ## 其他已适配插件变量
 
@@ -547,13 +629,13 @@ Workers Builds 提供，普通用户不要手动设置。
 - `MONGODB_URI`、`MONGO_*`、`STORAGE_URI`
 - `PORT`、`HOSTNAME`、`SSL_KEY`、`SSL_CERT`、`SSL_CA`
 - `IMPORT_CONFIG`
-- `BRIDGE_*`、`MMCONNECT_*`
-- `CONNECT_SOURCE=nightscout`、`glooko`、`linkup`、`minimedcarelink`
+- `MMCONNECT_*` 与未在本说明列出的 BRIDGE 扩展变量
+- `CONNECT_SOURCE=minimedcarelink`
 - Pushover、Maker/IFTTT 等外部发送凭据
 - `DEVICESTATUS_DAYS`，因为扩大 Device Status 窗口可能显著增加响应和实时消息体积
 - `DE_NORMALIZE_DATES`、`AUTHENTICATION_PROMPT_ON_LOAD`
 - `OBSCURED`、`OBSCURE_DEVICE_PROVENANCE`
-- `CORS_ALLOW_ORIGIN`、`INSECURE_USE_HTTP`、`SECURE_CSP*`、`SECURE_HSTS*`
+- `CORS_ALLOW_ORIGIN`、`INSECURE_USE_HTTP`、`SECURE_HSTS*`
 - `BASE_URL`、已弃用的 `TREATMENTS_AUTH`、`ALARM_PUMP_BATTERY_LOW`
 - 任意没有列在本文中的通用 `PLUGIN_NAME_*` 扩展变量
 
@@ -575,3 +657,11 @@ Workers Builds 提供，普通用户不要手动设置。
 
 不要只根据变量已经出现在 Cloudflare Dashboard 中就判断配置生效。最终以状态
 接口、页面行为、API 读写和持久化结果为准。
+
+## 上传拆批上限
+
+官方 10000 条总上限不覆盖 NSCF 的 Workers 预算。V1/V2 血糖每请求最多 1000 条，
+治疗/设备状态/Profile 等通用文档每批最多 100 条；API3、实时入口另有操作预算。
+通用上传器可按每批最多 100 条顺序发送，检查每个响应并保存进度；重试保留稳定的
+`_id` 或 `identifier`，因为有序批次失败前可能已提交有效前缀，不要重新生成 ID。
+管理清理与新来源导入已使用自己的受限循环；不要仅为一次发送 10000 条而放宽服务器预算。

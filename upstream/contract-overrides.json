@@ -478,8 +478,8 @@
       "reason": "The complete locked upstream file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. All four report-settings storage cases preserve the default property set, tracked localStorage writes and ignored unknown properties with the original reportstorage module."
     },
     "vendor/nightscout/tests/reports.test.js": {
-      "status": "pass",
-      "reason": "The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. Both full report workflows render the original day-to-day/statistics/distribution/hourly/percentile/success/calibration/treatment/profile surfaces, exercise mocked Treatment edit/delete, and produce the week-to-week report from locked fixtures. The data/API calls are upstream mocks, so public large-range loading and credentialed report mutations remain separate acceptance work."
+      "status": "unresolved",
+      "reason": "Upstream reports.test.js has its entire suite disabled with describe.skip (two pending), so loading it is not a passing full-report workflow. scripts/report-behavior.test.mjs executes the unchanged distribution, day-to-day summary and browser Profile modules: GMI/revised GMI, RMS in mg/dl and mmol/L at in/out-of-range boundaries, empty input, fixed-offset midnight/hour filtering, summary label spacing and sub-minute basal boundaries. These targeted regressions do not certify every report or credentialed edit/delete workflow; large-range loading and real-client report acceptance remain separate."
     },
     "vendor/nightscout/tests/api.security.test.js": {
       "status": "adapted",

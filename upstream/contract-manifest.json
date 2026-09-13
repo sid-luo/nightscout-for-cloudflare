@@ -19,7 +19,7 @@
     "provenance_scope": "mount_chain is a deterministic, locked-source syntactic assembly chain whose exact line anchors are re-derived during validation. registration/source fields are exact local source anchors. These fields do not prove runtime reachability, middleware order, handler execution, or test coverage; dynamic API3 chains stop at the genericSetup call.",
     "related_test_association": "Route-to-test links are boundary-aware heuristic candidates. Literal HTTP calls are filtered by their path-local method when statically visible; dynamic paths, plain-text references, prefix ambiguity, and API3 operation filename hints remain heuristic. Links are not pass, adapted, or coverage evidence and require human confirmation."
   },
-  "inputs_sha256": "33b09858c51bf9939ab20a76d3c97d9538296283132911bf3db1c10ef312332b",
+  "inputs_sha256": "b20fb996b5a987dc7aade0c966648e80281dac0dbf303ee594ff614e6c17586f",
   "statistics": {
     "route_count": 163,
     "routes_by_version": {
@@ -38,10 +38,10 @@
     },
     "test_file_count": 157,
     "tests_by_status": {
-      "pass": 44,
+      "pass": 43,
       "adapted": 90,
       "excluded-fixed-scope": 1,
-      "unresolved": 22
+      "unresolved": 23
     },
     "tests_by_workstream": {
       "1-storage-foundation": 16,
@@ -9125,8 +9125,8 @@
     },
     {
       "file": "vendor/nightscout/tests/reports.test.js",
-      "status": "pass",
-      "reason": "The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. Both full report workflows render the original day-to-day/statistics/distribution/hourly/percentile/success/calibration/treatment/profile surfaces, exercise mocked Treatment edit/delete, and produce the week-to-week report from locked fixtures. The data/API calls are upstream mocks, so public large-range loading and credentialed report mutations remain separate acceptance work.",
+      "status": "unresolved",
+      "reason": "Upstream reports.test.js has its entire suite disabled with describe.skip (two pending), so loading it is not a passing full-report workflow. scripts/report-behavior.test.mjs executes the unchanged distribution, day-to-day summary and browser Profile modules: GMI/revised GMI, RMS in mg/dl and mmol/L at in/out-of-range boundaries, empty input, fixed-offset midnight/hour filtering, summary label spacing and sub-minute basal boundaries. These targeted regressions do not certify every report or credentialed edit/delete workflow; large-range loading and real-client report acceptance remain separate.",
       "workstream": "8-ui-and-process-boundaries",
       "depends_on": [
         "3-api-v1-v2",

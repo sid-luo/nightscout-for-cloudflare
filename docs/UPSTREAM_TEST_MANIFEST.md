@@ -8,8 +8,8 @@ Locked upstream: `nightscout/cgm-remote-monitor` v15.0.8 at `92d0834219aa771b583
 
 - Routes: 163 (root: 1, v1: 46, v2: 63, v3: 53)
 - Upstream test files: 157
-- Statuses: pass: 44, adapted: 90, excluded-fixed-scope: 1, unresolved: 22
-- Input fingerprint: `33b09858c51bf9939ab20a76d3c97d9538296283132911bf3db1c10ef312332b`
+- Statuses: pass: 43, adapted: 90, excluded-fixed-scope: 1, unresolved: 23
+- Input fingerprint: `b20fb996b5a987dc7aade0c966648e80281dac0dbf303ee594ff614e6c17586f`
 
 `pass` is intentionally strict: the whole upstream file must run unchanged. `adapted` requires every contract in that file to be represented by named passing Workers-runtime tests. A partial local implementation therefore remains `unresolved`.
 
@@ -26,7 +26,7 @@ The only fixed-scope exclusion is the MiniMed CareLink integration (`mmconnect.t
 | 5-api-v3 | 1-storage-foundation, 2-authorization, 3-api-v1-v2 | 20 | 4 | 0 |
 | 6-realtime | 1-storage-foundation, 2-authorization, 5-api-v3 | 4 | 2 | 0 |
 | 7-background-and-integrations | 1-storage-foundation, 4-plugins-and-calculations | 12 | 5 | 1 |
-| 8-ui-and-process-boundaries | 3-api-v1-v2, 4-plugins-and-calculations, 6-realtime | 18 | 0 | 0 |
+| 8-ui-and-process-boundaries | 3-api-v1-v2, 4-plugins-and-calculations, 6-realtime | 18 | 1 | 0 |
 
 Dispatch work in numeric order. Within a workstream, use each test's `related_routes` in `upstream/contract-manifest.json` only as heuristic candidate links for grouping implementation slices; confirm each link against upstream source before claiming coverage.
 
@@ -235,7 +235,7 @@ Route/test associations are boundary-aware heuristics. Static literal HTTP calls
 | `vendor/nightscout/tests/language.test.js` | adapted | 0 | Represented by all seven runtime cases in test/language-contract.test.ts and the recursive asset case in scripts/audit-language-contracts.test.mjs: English identity, positional/object placeholders, French/Czech/case-insensitive/Traditional-Chinese translation and unsupported-code fallback. The request-local src/language.ts adapter loads official dictionaries through Workers Static Assets instead of fs; all 33 deployed JSON files are valid and byte-identical to locked v15.0.7, and LANGUAGE now reaches HTTP/Socket status for the unchanged browser loader. |
 | `vendor/nightscout/tests/profileeditor.records.test.js` | pass | 0 | Runs unchanged in scripts/run-upstream-client-contracts.mjs against the locked 15.0.8 source whose generated browser bundle is byte-identical to the shipped NSCF bundle. Host-date golden fixtures run separately in their recorded America/Los_Angeles timezone; no expected values are patched. |
 | `vendor/nightscout/tests/profileeditor.test.js` | pass | 0 | The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. The original Profile Editor renders, loads its mocked profile list, switches records and exercises mocked save/delete confirmations. This proves the shipped official client workflow, not a current credentialed remote Profile mutation. |
-| `vendor/nightscout/tests/reports.test.js` | pass | 15 | The complete locked upstream headless file runs unchanged through scripts/run-upstream-client-contracts.mjs after the official client bundle byte-equality gate. Both full report workflows render the original day-to-day/statistics/distribution/hourly/percentile/success/calibration/treatment/profile surfaces, exercise mocked Treatment edit/delete, and produce the week-to-week report from locked fixtures. The data/API calls are upstream mocks, so public large-range loading and credentialed report mutations remain separate acceptance work. |
+| `vendor/nightscout/tests/reports.test.js` | unresolved | 15 | Upstream reports.test.js has its entire suite disabled with describe.skip (two pending), so loading it is not a passing full-report workflow. scripts/report-behavior.test.mjs executes the unchanged distribution, day-to-day summary and browser Profile modules: GMI/revised GMI, RMS in mg/dl and mmol/L at in/out-of-range boundaries, empty input, fixed-offset midnight/hour filtering, summary label spacing and sub-minute basal boundaries. These targeted regressions do not certify every report or credentialed edit/delete workflow; large-range loading and real-client report acceptance remain separate. |
 | `vendor/nightscout/tests/sandbox.test.js` | adapted | 0 | Represented by all five named Workers-runtime cases in test/sandbox-contract.test.ts plus one complete helper-surface case: client/server initialization, safe notification projection, LOW/HIGH display sentinels, BG Now/default messages, immutable first-writer properties, historical SGV selection, unit/insulin/BG display conversion and plugin-specific extended settings. src/sandbox.ts replaces only Node dynamic require/module-global state with the existing request-local Profile, units and times adapters. |
 | `vendor/nightscout/tests/settings.test.js` | adapted | 0 | Represented by all 13 named Workers-runtime cases in test/settings-contract.test.ts and wired into the HTTP/Socket.IO status settings snapshot: locked defaults, environment/camel accessors, default disablement, custom snooze arrays, threshold and alarm-type selection/correction, scalar/array feature checks and the upstream method surface. src/settings.ts is request-local and removes secure keys recursively before status serialization; the extra isolation case verifies that one tenant/request cannot mutate another settings instance. |
 

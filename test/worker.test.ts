@@ -69,7 +69,7 @@ describe("official Nightscout UI assets", () => {
     expect(html).toContain('id="nscf-about"');
     expect(html).toContain('Upstream version <span class="version"></span>');
     expect(html).toContain("<strong>Nightscout for Cloudflare</strong>");
-    expect(html).toContain("Version <strong>1.3.0-beta.1</strong>");
+    expect(html).toContain("Version <strong>1.3.0-beta.2</strong>");
     expect(html).toContain(
       'href="https://github.com/sid-luo/nightscout-for-cloudflare"',
     );
@@ -116,9 +116,15 @@ describe("official Nightscout UI assets", () => {
     const maintenanceResponse = await SELF.fetch("https://example.test/platform/admin-maintenance.js");
     expect(maintenanceResponse.status).toBe(200);
     const maintenanceSource = await maintenanceResponse.text();
+    const reportResponse = await SELF.fetch("https://example.test/platform/report-adapter.js");
+    expect(reportResponse.status).toBe(200);
+    const reportSource = await reportResponse.text();
+    const candlesResponse = await SELF.fetch("https://example.test/report/js/flotcandle.js");
+    expect(candlesResponse.status).toBe(200);
+    const candlesSource = await candlesResponse.text();
     const combinedDigest = await crypto.subtle.digest(
       "SHA-256",
-      new TextEncoder().encode(socketClientSource + tenantAdapterSource + maintenanceSource),
+      new TextEncoder().encode(socketClientSource + tenantAdapterSource + maintenanceSource + reportSource + candlesSource),
     );
     const transportCachebuster = Array.from(
       new Uint8Array(combinedDigest),
@@ -200,6 +206,8 @@ describe("official Nightscout UI assets", () => {
       API_SECRET: env.API_SECRET,
       ENTRY_STORE: env.ENTRY_STORE,
       DEXCOM_SHARE_CONNECTOR: env.DEXCOM_SHARE_CONNECTOR,
+      SOURCE_CONNECTOR: env.SOURCE_CONNECTOR,
+      WEBHOOK_DELIVERY: env.WEBHOOK_DELIVERY,
       ASSETS: {
         fetch: async (request: Request) => {
           const validator = request.headers.get("If-None-Match");
@@ -1393,6 +1401,8 @@ describe("Nightscout compatibility API", () => {
       ASSETS: env.ASSETS,
       ENTRY_STORE: env.ENTRY_STORE,
       DEXCOM_SHARE_CONNECTOR: env.DEXCOM_SHARE_CONNECTOR,
+      SOURCE_CONNECTOR: env.SOURCE_CONNECTOR,
+      WEBHOOK_DELIVERY: env.WEBHOOK_DELIVERY,
       API_SECRET: TEST_API_SECRET,
     };
     expect((await worker.fetch(
@@ -1409,6 +1419,8 @@ describe("Nightscout compatibility API", () => {
         ASSETS: env.ASSETS,
         ENTRY_STORE: env.ENTRY_STORE,
         DEXCOM_SHARE_CONNECTOR: env.DEXCOM_SHARE_CONNECTOR,
+      SOURCE_CONNECTOR: env.SOURCE_CONNECTOR,
+      WEBHOOK_DELIVERY: env.WEBHOOK_DELIVERY,
         API_SECRET: shortSecret,
       },
     );

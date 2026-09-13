@@ -116,8 +116,12 @@ database writes.
 15.0.8. Set `false` or `off` to send `X-Frame-Options: SAMEORIGIN` and the enforced
 CSP `frame-ancestors 'self'`. `true`/`on`, missing and invalid values preserve the
 compatibility default. This controls who may embed this instance; `FRAME_URL_n`
-independently controls what the Split View loads. The broader `SECURE_CSP*`
-server settings remain outside this Workers adapter.
+independently controls what the Split View loads. `SECURE_CSP=true`/`on` enables
+upstream-style CSP directives. `SECURE_CSP_REPORT_ONLY=true`/`on` places them in
+a report-only header while a requested framing restriction remains enforced.
+`frame-src` contains self and the HTTP(S) origins of configured `FRAME_URL_1`…`8`;
+credentials, query values, invalid URLs and non-HTTP schemes are excluded.
+The `/report-violation` receiver returns 204 without storing/logging private URLs.
 
 ## Feature switches
 
@@ -412,9 +416,8 @@ an isolated test environment before enabling it.
 ## Dexcom Share (Beta)
 
 The Dexcom Share Connector is disabled by default. It uses a separate Durable
-Object and alarm to fetch data. The current implementation supports only
-`dexcomshare`; do not copy other `CONNECT_SOURCE` values from the standard
-Nightscout documentation.
+Object and alarm to fetch data. This beta adapts the Dexcom protocol from
+nightscout-connect 0.0.13; the additional supported sources are documented below.
 
 Configuration:
 
@@ -445,6 +448,103 @@ Important details:
 - Authenticated Admin users can inspect `/_nscf/connect/status`.
 - The simulated protocol is covered by tests, but each real Dexcom Share
   account should be validated by its owner.
+
+## Additional connectors and Webhook (1.3 beta)
+
+All new features default off. Store account names, passwords, source URLs containing
+tokens and source API secrets as Cloudflare Secrets. Do not put them in Git.
+They apply only to the default dataset (`demo`). After deployment open `/` or
+`/admin/` once, or authenticated `/_nscf/connect/status`, to start a selected source.
+Its Durable Object then wakes on its own alarm; it does not require an open browser.
+
+### BRIDGE compatibility
+
+A complete `BRIDGE_USER_NAME` + `BRIDGE_PASSWORD` automatically activates the
+Dexcom adapter. `BRIDGE_SERVER=EU` maps to `ous`; a host name maps to an explicit
+HTTPS server. Existing `CONNECT_SHARE_*` settings take precedence. An explicit
+other `CONNECT_SOURCE` is never overwritten. `CONNECT_SHARE_SERVER` accepts a
+host name without a scheme, path or credentials.
+
+`DEXCOM_BRIDGE_USE_LEGACY=true` (also `BRIDGE_USE_LEGACY`,
+`BRIDGE_DEXCOM_BRIDGE_USE_LEGACY`, or `CUSTOMCONNSTR_DEXCOM_BRIDGE_USE_LEGACY`)
+selects the legacy bridge HTTP request format, fresh login per poll and `share2`
+entry provenance. `BRIDGE_INTERVAL` defaults to 156000 ms (upstream 1000–300000
+range); `BRIDGE_MINUTES` defaults to 1440, bounded to 5–2880. Node timers and
+unbounded process retries are replaced by persisted alarms/backoff. This is a
+Workers protocol adapter, not the Node share2nightscout process.
+
+### Nightscout source
+
+Set `ENABLE=connect`, `CONNECT_SOURCE=nightscout` and `CONNECT_SOURCE_ENDPOINT`
+to the source HTTPS URL. An optional `?token=...` is exchanged for a bearer;
+otherwise `CONNECT_SOURCE_API_SECRET` is sent as its SHA-1 digest. With neither,
+the source must be readable. This adapter never creates remote authorization subjects.
+
+`CONNECT_SOURCE_COLLECTIONS` is a comma-separated subset of
+`entries,treatments,devicestatus,profiles` (all four by default).
+`CONNECT_SOURCE_MAX_COUNT` accepts 1–10000, default 1000. Each Workers cycle reads
+at most 100 records per collection; the configured maximum can reduce this page
+size. Remaining data continues on later five-minute cycles. V1 does not implement
+skip, so continuation uses time plus `_id`, including records sharing a timestamp.
+Each collection advances only after storage succeeds; deterministic IDs make page
+replay safe after partial failure. Entries/treatments/device status initially read
+the last two days; profiles are scanned from their start dates and rescanned for edits.
+Imported IDs are namespaced by the source identity. Deletes are not mirrored.
+
+### LibreLinkUp
+
+Set `CONNECT_SOURCE=linkup` (alias `librelinkup`),
+`CONNECT_LINK_UP_USERNAME` and `CONNECT_LINK_UP_PASSWORD`.
+`CONNECT_LINK_UP_REGION` defaults to `EU`; supported regions are
+AE/AP/AU/CA/DE/EU/EU2/FR/JP/US. `CONNECT_LINK_UP_SERVER` optionally supplies a host.
+`CONNECT_LINK_UP_VERSION` defaults to `4.7.0`, `CONNECT_LINK_UP_PRODUCT` to `llu.ios`,
+and `CONNECT_LINK_UP_INTERVAL` to 5 minutes (1–60). Set `CONNECT_LINK_UP_PATIENT_ID`
+when more than one connection exists; ambiguous or mismatched selection stops
+with a sanitized configuration/status error. One allowlisted region hint is
+accepted. Graph and latest glucose are combined and de-duplicated by timestamp;
+factory timestamps without a zone are parsed as UTC.
+
+### Glooko
+
+Set `CONNECT_SOURCE=glooko`, `CONNECT_GLOOKO_EMAIL` and `CONNECT_GLOOKO_PASSWORD`.
+`CONNECT_GLOOKO_ENV` is default/development/production/eu/ca;
+`CONNECT_GLOOKO_SERVER` and `CONNECT_GLOOKO_WEB_ORIGIN` optionally override hosts.
+`CONNECT_GLOOKO_AUTH_MODE` is api (default), web, or auto; auto falls back to web
+only for HTTP 422. Web login handles CSRF and session cookies. Two-factor-required
+accounts stop with `two_factor_required`; this beta does not bypass interactive 2FA.
+`CONNECT_GLOOKO_DEVICE_ID`/`CONNECT_GLOOKO_SERIAL_NUMBER` optionally set device IDs.
+
+The v2 reader imports CGM, normal boluses and scheduled basal segments.
+`CONNECT_GLOOKO_USE_V3_GRAPH=true` enables CGM graph fallback with profile units
+when v2 glucose is empty. `CONNECT_GLOOKO_TIMEZONE_OFFSET` is hours, default 0,
+subtracted from source timestamps as upstream does. Encoded mg/dl ×100 values,
+mmol/L graph values and basal seconds are converted explicitly. Read windows are
+bounded to two days and v2 requests to 1000 items per endpoint; this is not an
+unlimited historical importer. Glooko and LibreLinkUp replay bounded windows with
+persisted content hashes rather than pretending their APIs support V1 pagination.
+
+### Webhook
+
+Set `ENABLE` to include `webhook`, `WEBHOOK_HOST` to a remote host, and optionally
+`WEBHOOK_PROTOCOL=https`, `WEBHOOK_PORT=443`, `WEBHOOK_PATH=/nightscout`.
+Cloudflare has no local Node receiver; an explicitly configured HTTPS destination
+is required. It receives only `{source:"nightscout",mgdl,mills,iso}` for glucose.
+The first observed reading establishes a persisted baseline and is suppressed.
+A new timestamp is queued durably; 2xx confirms success, errors/timeouts retry with
+backoff, and the five-second HTTP timeout covers the response body. While a send
+is pending, newer observations coalesce into one latest queued reading. No real
+receiver is configured in the shared beta deployment.
+
+Delivery is at least once: a crash after remote acceptance but before local commit
+can repeat the request. The stable `Idempotency-Key` header allows receiver-side
+deduplication. Sessions/retries survive restart, old timestamps do not retrigger,
+and disabling or changing the destination cancels the old queue. Authenticated
+admins can inspect `/_nscf/webhook/status`, which exposes no payload or secret.
+
+Source HTTP responses are limited to 2 MiB and 15 seconds; no credential-bearing
+redirects are followed. Storage batches use at most 100 documents. These bounds
+and default-off behavior keep work controlled; enabling more jobs increases usage.
+Simulated tests cover protocols and persistence, not real-account availability.
 
 ## Other supported plugin variables
 
@@ -579,14 +679,14 @@ boundary. Do not add them only because they appear in the upstream README:
 - `MONGODB_URI`, `MONGO_*`, and `STORAGE_URI`
 - `PORT`, `HOSTNAME`, `SSL_KEY`, `SSL_CERT`, and `SSL_CA`
 - `IMPORT_CONFIG`
-- `BRIDGE_*` and `MMCONNECT_*`
-- `CONNECT_SOURCE=nightscout`, `glooko`, `linkup`, or `minimedcarelink`
+- `MMCONNECT_*` and undocumented BRIDGE extension variables
+- `CONNECT_SOURCE=minimedcarelink`
 - External Pushover and Maker/IFTTT credentials
 - `DEVICESTATUS_DAYS`, because a larger Device Status window may
   substantially increase response and real-time message sizes
 - `DE_NORMALIZE_DATES` and `AUTHENTICATION_PROMPT_ON_LOAD`
 - `OBSCURED` and `OBSCURE_DEVICE_PROVENANCE`
-- `CORS_ALLOW_ORIGIN`, `INSECURE_USE_HTTP`, `SECURE_CSP*`, and `SECURE_HSTS*`
+- `CORS_ALLOW_ORIGIN`, `INSECURE_USE_HTTP`, and `SECURE_HSTS*`
 - `BASE_URL`, deprecated `TREATMENTS_AUTH`, and `ALARM_PUMP_BATTERY_LOW`
 - Arbitrary `PLUGIN_NAME_*` extension variables not listed in this guide
 
@@ -594,6 +694,18 @@ Some page preferences can still be saved through the Nightscout browser
 settings UI. A new server-side variable should first be implemented and
 tested in NSCF's request-local Settings/Plugin adapter, rather than merely
 being created with the same name in the Cloudflare Dashboard.
+
+## Upload batch limits
+
+The upstream 10000-item ceiling does not override NSCF's Workers budgets.
+V1/V2 entries accept at most 1000 records per request; general document batches
+(treatments/device status/profiles) accept at most 100. API3 and realtime have
+additional operation-specific limits. For a portable bulk uploader, send at most
+100 documents sequentially, check each HTTP result, and retain stable `_id` or
+`identifier` values when retrying. Do not retry a failed ordered batch by assigning
+new IDs: a valid prefix may already have committed. Admin cleanup and source
+imports already use their own bounded loops. Do not enlarge a server limit solely
+to accept a single 10000-record request.
 
 ## Verifying configuration
 

@@ -1,4 +1,5 @@
 import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storage-purifier";
+import { resolveWebhook, type WebhookEnvironment } from "./webhook-delivery";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
 import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
 import { DurableObject } from "cloudflare:workers";
@@ -223,6 +224,7 @@ export type LegacyTreatmentCreateResult =
 
 type EntryStoreEnv = Env
   & NightscoutStatusEnvironment
+  & WebhookEnvironment
   & {
   API_SECRET?: string;
   AUTH_DEFAULT_ROLES?: string;
@@ -2635,6 +2637,13 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       try {
         if (task.kind === PLUGIN_NOTIFICATIONS_TASK) {
           this.processPluginNotificationTask(task, now);
+          try {
+            await this.observeWebhook();
+          } catch {
+            // Notification evaluation has completed. Retry only the durable
+            // outlet handoff on the next heartbeat without failing ingestion.
+            tasks.schedule(PLUGIN_NOTIFICATIONS_TASK, now + 30_000, now);
+          }
         } else {
           this.ctx.storage.transactionSync(() => tasks.complete(task.kind, null, now));
         }
@@ -2648,6 +2657,18 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private configuredApiSecret(): string | null {
     const secret = this.env.API_SECRET;
     return secret !== undefined && secret.length >= 12 ? secret : null;
+  }
+
+  private async observeWebhook(): Promise<void> {
+    if (!resolveWebhook(this.env).enabled || !this.env.WEBHOOK_DELIVERY) return;
+    // Instance-level credentials apply to the default dataset only. Test or
+    // other tenants must never send their readings to that receiver.
+    if (!this.ctx.id.equals(this.env.ENTRY_STORE.idFromName('demo'))) return;
+    const latest = this.documentRepository().queryLegacyEntries({ count: 1, type: 'sgv',
+      filters: [{ field: 'date', operator: 'lte', value: Date.now() }], sort: [{ field: 'date', direction: 'desc' }] })[0];
+    if (!latest || !Number.isFinite(Number(latest.sgv)) || Number(latest.sgv) <= 0) return;
+    const mills = Number(latest.date);
+    await this.env.WEBHOOK_DELIVERY.getByName('demo').observe({ source: 'nightscout', mgdl: Number(latest.sgv), mills, iso: new Date(mills).toISOString() });
   }
 
   private async deriveAuthorizationSubject(

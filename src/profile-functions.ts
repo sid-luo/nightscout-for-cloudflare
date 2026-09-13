@@ -1,3 +1,4 @@
+import { normalizeProfileTimezone, profileTimezoneFormatter } from "./runtime/timezone";
 import { nightscoutTimes } from "./runtime/times";
 
 export type NightscoutProfileDocument = Record<string, unknown>;
@@ -42,20 +43,19 @@ function scheduleSecondsAt(time: number, timezone: string | undefined): number {
     return date.getHours() * 3_600 + date.getMinutes() * 60 + date.getSeconds();
   }
 
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
+  const parts = profileTimezoneFormatter("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).formatToParts(new Date(time));
+  }, timezone).formatToParts(new Date(time));
   const read = (type: Intl.DateTimeFormatPartTypes): number =>
     Number(parts.find((part) => part.type === type)?.value ?? 0);
   return read("hour") * 3_600 + read("minute") * 60 + read("second");
 }
 
 /**
- * Workers-safe port of locked Nightscout v15.0.7 lib/profilefunctions.js.
+ * Workers-safe port of Nightscout Profile functions, with 15.0.8 timezone handling.
  *
  * The profile selection, profile-switch, Circadian Percentage Profile and
  * temp-basal rules intentionally retain upstream coercion and ordering. Only
@@ -230,12 +230,7 @@ export class NightscoutProfileFunctions {
   }
 
   getTimezone(specProfile?: string): string | undefined {
-    const timezone = this.getCurrentProfile(null, specProfile).timezone;
-    if (typeof timezone !== "string") return undefined;
-    // The locked source calls replace() without assigning its return value.
-    // Retain that behavior instead of silently changing profile semantics.
-    if (timezone) timezone.replace("ETC", "Etc");
-    return timezone;
+    return normalizeProfileTimezone(this.getCurrentProfile(null, specProfile).timezone);
   }
 
   hasData(): boolean {

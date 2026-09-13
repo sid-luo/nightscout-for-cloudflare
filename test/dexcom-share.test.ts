@@ -125,6 +125,29 @@ function dates(result: Awaited<ReturnType<typeof runDexcomShareCycle>>): number[
 }
 
 describe("Dexcom Share configuration", () => {
+  it("migrates complete BRIDGE credentials and EU server without mutating configuration", () => {
+    const env = { BRIDGE_USER_NAME: ACCOUNT, BRIDGE_PASSWORD: PASSWORD, BRIDGE_SERVER: "EU" };
+    expect(readyConfig(env)).toMatchObject({ bridgeMode: "migrated", region: "ous", baseUrl: `https://${OUS_HOST}`, accountName: ACCOUNT });
+    expect(Object.keys(env)).toHaveLength(3);
+    expect(readyConfig({ ...env, ...ENVIRONMENT })).toMatchObject({ accountName: ACCOUNT, bridgeMode: "migrated" });
+    expect(readyConfig({ ...env, ...ENVIRONMENT, CONNECT_SHARE_REGION: "us" }).baseUrl).toBe(`https://${US_HOST}`);
+    expect(resolveDexcomShareConfig({ ...env, ENABLE: "connect", CONNECT_SOURCE: "nightscout" })).toMatchObject({ error: "unsupported_source" });
+    expect(resolveDexcomShareConfig({ BRIDGE_USER_NAME: ACCOUNT })).toMatchObject({ state: "disabled" });
+  });
+
+  it("explicit Connect credentials and server win over automatic BRIDGE migration", async () => {
+    const config = readyConfig({ ...ENVIRONMENT, CONNECT_SHARE_SERVER: "share.example.test", BRIDGE_USER_NAME: "old", BRIDGE_PASSWORD: "old", BRIDGE_SERVER: "EU" });
+    expect(config).toMatchObject({ accountName: ACCOUNT, password: PASSWORD, baseUrl: "https://share.example.test" });
+    expect(await dexcomShareConfigFingerprint(config)).not.toBe(await dexcomShareConfigFingerprint(readyConfig()));
+    for (const server of ['https://example.test', 'user@host.test', 'host.test/path', '127.0.0.1']) {
+      expect(resolveDexcomShareConfig({ ...ENVIRONMENT, CONNECT_SHARE_SERVER: server })).toMatchObject({ error: "invalid_server" });
+    }
+  });
+
+  it("legacy opt-in uses BRIDGE credentials and the bounded legacy poll settings", () => {
+    const config = readyConfig({ ...ENVIRONMENT, BRIDGE_USER_NAME: "old", BRIDGE_PASSWORD: "old-password", BRIDGE_SERVER: "EU", DEXCOM_BRIDGE_USE_LEGACY: "true", BRIDGE_INTERVAL: "9000" });
+    expect(config).toMatchObject({ accountName: "old", password: "old-password", bridgeMode: "legacy", legacyInterval: 9000, legacyMinutes: 1440, baseUrl: `https://${OUS_HOST}` });
+  });
   it("requires the connect gate, explicit source and both credentials", () => {
     expect(resolveDexcomShareConfig({})).toEqual({
       enabled: false,
@@ -196,6 +219,21 @@ describe("Dexcom Share configuration", () => {
 });
 
 describe("Dexcom Share HTTP contract", () => {
+  it("legacy fallback executes the bridge protocol, fresh login and legacy entry provenance", async () => {
+    const config = readyConfig({ BRIDGE_USER_NAME: ACCOUNT, BRIDGE_PASSWORD: PASSWORD, DEXCOM_BRIDGE_USE_LEGACY: "true" });
+    const mock = scriptedFetch([
+      request => { expect(request.headers.get('User-Agent')).toBe('share2nightscout-bridge/0.2.12'); return json('account-id'); },
+      () => json('new-session'),
+      () => json([glucose(NOW - 60_000)]),
+    ]);
+    const result = await runWith(config, await reusableState(config), mock.fetch);
+    expect(result.state.lastErrorCode).toBeNull();
+    expect(mock.requests).toHaveLength(3);
+    expect(new URL(mock.requests[0]!.url).search).toBe('');
+    expect(mock.requests[2]!.body).toBe('');
+    expect(JSON.parse(result.validatedEntries[0]!.documentJson).device).toBe('share2');
+    expect(result.nextDueAt).toBe(NOW + 156_000);
+  });
   it("uses the official US endpoints, query parameters and request bodies", async () => {
     const mock = scriptedFetch([
       () => json("account-id"),

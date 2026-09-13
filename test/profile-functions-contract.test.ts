@@ -226,3 +226,28 @@ describe("locked Nightscout v15.0.7 profile.test.js contract", () => {
       .toBe(30);
   });
 });
+
+describe('15.0.8 profile offset timezones', () => {
+  it.each([
+    ['GMT+4', 'Etc/GMT-4'], ['UTC+2', 'Etc/GMT-2'], ['GMT-5', 'Etc/GMT+5'],
+    ['ETC/GMT+5', 'Etc/GMT+5'], ['GMT+0', 'Etc/GMT-0'], ['GMT-0', 'Etc/GMT+0'],
+    ['GMT+12', 'Etc/GMT-12'], ['GMT+5:30', '+05:30'], ['GMT-3:30', '-03:30'],
+    ['GMT+5:45', '+05:45'], ['UTC+9:30', '+09:30'], ['GMT+5:00', 'Etc/GMT-5'],
+    ['GMT+5:60', 'GMT+5:60'], ['Asia/Shanghai', 'Asia/Shanghai'], ['UTC', 'UTC'],
+  ])('normalizes %s to %s', (timezone, normalized) => {
+    expect(createNightscoutProfileFunctions([{timezone}]).getTimezone()).toBe(normalized);
+  });
+  it.each([
+    ['GMT+5:30', '2026-09-07T18:29:00Z', '2026-09-07T18:30:00Z'],
+    ['GMT+5:45', '2026-09-07T18:14:00Z', '2026-09-07T18:15:00Z'],
+    ['GMT-3:30', '2026-09-08T03:29:00Z', '2026-09-08T03:30:00Z'],
+    ['GMT+4', '2026-09-07T19:59:00Z', '2026-09-07T20:00:00Z'],
+  ])('uses the correct schedule on both sides of local midnight for %s', (timezone,before,after) => {
+    const p=createNightscoutProfileFunctions([{timezone,basal:[
+      {time:'00:00',timeAsSeconds:0,value:0.5},
+      {time:'23:00',timeAsSeconds:82800,value:1},
+    ]}]);
+    expect(p.getBasal(Date.parse(before))).toBe(1);
+    expect(p.getBasal(Date.parse(after))).toBe(0.5);
+  });
+});

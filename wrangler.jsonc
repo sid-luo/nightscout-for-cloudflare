@@ -3,7 +3,9 @@
   "name": "nscf-nightscout-beta",
   "main": "src/index.ts",
   "compatibility_date": "2026-07-17",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "preview_urls": false,
   "keep_vars": true,
@@ -51,17 +53,41 @@
       {
         "name": "DEXCOM_SHARE_CONNECTOR",
         "class_name": "DexcomShareConnector"
+      },
+      {
+        "name": "SOURCE_CONNECTOR",
+        "class_name": "SourceConnector"
+      },
+      {
+        "name": "WEBHOOK_DELIVERY",
+        "class_name": "WebhookDelivery"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["EntryStore"]
+      "new_sqlite_classes": [
+        "EntryStore"
+      ]
     },
     {
       "tag": "v2",
-      "new_sqlite_classes": ["DexcomShareConnector"]
+      "new_sqlite_classes": [
+        "DexcomShareConnector"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "SourceConnector"
+      ]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": [
+        "WebhookDelivery"
+      ]
     }
   ],
   "observability": {

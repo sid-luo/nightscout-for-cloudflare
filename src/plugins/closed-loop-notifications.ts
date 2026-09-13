@@ -1,3 +1,4 @@
+import { profileTimezoneFormatter, type TimezoneFormatter } from "../runtime/timezone";
 import type { NightscoutProfileFunctions } from "../profile-functions";
 import type { RealtimeDocument } from "../realtime/ddata-snapshot";
 import { WARN } from "../runtime/levels";
@@ -99,7 +100,7 @@ function offlineMarkerDeadlines(
   return active;
 }
 
-function formatterForTimezone(timezone: string | undefined): Intl.DateTimeFormat {
+function formatterForTimezone(timezone: string | undefined): TimezoneFormatter {
   const options: Intl.DateTimeFormatOptions = {
     year: "numeric",
     month: "2-digit",
@@ -109,16 +110,10 @@ function formatterForTimezone(timezone: string | undefined): Intl.DateTimeFormat
     second: "2-digit",
     hourCycle: "h23",
   };
-  try {
-    return new Intl.DateTimeFormat("en-CA", { ...options, timeZone: timezone });
-  } catch {
-    // preparePumpData() falls back to Date when an uploaded timezone is not
-    // understood. Workers Date components are UTC, so use UTC here as well.
-    return new Intl.DateTimeFormat("en-CA", { ...options, timeZone: "UTC" });
-  }
+  return profileTimezoneFormatter("en-CA", options, timezone);
 }
 
-function zonedParts(formatter: Intl.DateTimeFormat, at: number): ZonedParts {
+function zonedParts(formatter: TimezoneFormatter, at: number): ZonedParts {
   const parts = formatter.formatToParts(new Date(at));
   const read = (type: Intl.DateTimeFormatPartTypes): number =>
     Number(parts.find((part) => part.type === type)?.value ?? 0);
@@ -173,7 +168,7 @@ function localTarget(
 }
 
 function zonedTargetToEpoch(
-  formatter: Intl.DateTimeFormat,
+  formatter: TimezoneFormatter,
   target: ZonedParts,
   after: number,
 ): number | null {

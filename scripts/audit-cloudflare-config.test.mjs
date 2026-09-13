@@ -23,10 +23,14 @@ test("deployment uses one visible API_SECRET variable without adding products", 
   assert.deepEqual(config.durable_objects?.bindings, [
     { name: "ENTRY_STORE", class_name: "EntryStore" },
     { name: "DEXCOM_SHARE_CONNECTOR", class_name: "DexcomShareConnector" },
+    { name: "SOURCE_CONNECTOR", class_name: "SourceConnector" },
+    { name: "WEBHOOK_DELIVERY", class_name: "WebhookDelivery" },
   ]);
   assert.deepEqual(config.migrations, [
     { tag: "v1", new_sqlite_classes: ["EntryStore"] },
     { tag: "v2", new_sqlite_classes: ["DexcomShareConnector"] },
+    { tag: "v3", new_sqlite_classes: ["SourceConnector"] },
+    { tag: "v4", new_sqlite_classes: ["WebhookDelivery"] },
   ]);
 });
 
@@ -50,7 +54,7 @@ test("Deploy to Cloudflare template requests one plaintext value and a clean-sou
     "node --test scripts/cloudflare-auto-update.test.mjs",
   );
   assert.equal(packageJson.scripts?.deploy, "wrangler deploy");
-  assert.equal(packageJson.version, "1.3.0-beta.1");
+  assert.equal(packageJson.version, "1.3.0-beta.2");
   assert.equal(
     packageJson.repository?.url,
     "git+https://github.com/sid-luo/nightscout-for-cloudflare.git",

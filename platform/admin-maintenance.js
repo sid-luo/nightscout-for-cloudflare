@@ -6,6 +6,75 @@
   var $ = global.jQuery;
   var active = false;
 
+  function selectedRange(client) {
+    var startValue = $('#admin_daterange_start').val();
+    var endValue = $('#admin_daterange_end').val();
+    for (var value of [startValue, endValue]) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !global.moment(value, 'YYYY-MM-DD', true).isValid()) {
+        throw new Error(client.translate('Please select valid dates'));
+      }
+    }
+    var profile = client.sbx && client.sbx.data && client.sbx.data.profile;
+    var zone = profile && profile.getTimezone();
+    function parse(value) {
+      if (profile && typeof profile.parseInTimezone === 'function') return profile.parseInTimezone(value);
+      if (/^[+-]\d{2}:\d{2}$/.test(zone || '')) return global.moment.parseZone(value + 'T00:00:00' + zone);
+      return zone ? global.moment.tz(value, 'YYYY-MM-DD', true, zone) : global.moment(value, 'YYYY-MM-DD', true);
+    }
+    var start = parse(startValue), end = parse(endValue);
+    if (!start.isValid() || !end.isValid() || start.isAfter(end)) throw new Error(client.translate('Please select valid dates'));
+    var collection = $('#admin_daterange_collection').val();
+    var collections = collection === 'all' ? ['entries', 'treatments', 'devicestatus'] : [collection];
+    if (collections.some(function (item) { return !['entries', 'treatments', 'devicestatus'].includes(item); })) throw new Error('Invalid collection');
+    return { start: start.startOf('day'), end: end.endOf('day'), collections, startValue, endValue };
+  }
+
+  function rangeQuery(range, collection) {
+    var field = collection === 'entries' ? 'date' : 'created_at';
+    var query = new URLSearchParams();
+    query.set('find[' + field + '][$gte]', collection === 'entries' ? String(range.start.valueOf()) : range.start.toISOString());
+    query.set('find[' + field + '][$lte]', collection === 'entries' ? String(range.end.valueOf()) : range.end.toISOString());
+    var tenant = new URLSearchParams(global.location.search).get('tenant');
+    if (tenant) query.set('tenant', tenant);
+    return query;
+  }
+
+  // Both actions use the same timezone/date validation; never preview one day
+  // then delete another. Keep the upstream form, replace its transport handler.
+  var dateAction = plugins('daterangedelete').actions[0];
+  var originalDateInit = dateAction.init;
+  var previewGeneration = 0;
+  dateAction.init = function (client, callback) {
+    return originalDateInit(client, function () {
+      async function preview(event) {
+        if (event && event.preventDefault) event.preventDefault();
+        var generation = ++previewGeneration;
+        var output = $('#admin_daterange_preview_count');
+        try {
+          var range = selectedRange(client), total = 0, capped = false, labels = [];
+          output.text(client.translate('Checking...'));
+          for (var collection of range.collections) {
+            var query = rangeQuery(range, collection); query.set('count', '10000');
+            var data = await $.ajax({ url: '/api/v1/' + collection + '.json?' + query.toString(), method: 'GET', headers: client.headers(), cache: false, dataType: 'json' });
+            if (generation !== previewGeneration) return;
+            if (!Array.isArray(data)) throw new Error('Invalid preview response');
+            total += data.length; capped = capped || data.length >= 10000;
+            labels.push(collection + ': ' + (data.length >= 10000 ? '≥ ' : '') + data.length);
+          }
+          output.text(labels.join(' | ') + ' | Total: ' + (capped ? '≥ ' : '') + total);
+        } catch (error) {
+          if (generation === previewGeneration) output.text(client.translate('Error') + ': ' + (error.message || 'Preview failed'));
+        }
+      }
+      $('#admin_daterange_preview').off('click').on('click', preview);
+      $('#admin_daterange_collection').off('change').on('change', preview);
+      $('#admin_daterange_start, #admin_daterange_end').off('change').on('change', function () {
+        previewGeneration++; $('#admin_daterange_preview_count').text('');
+      });
+      if (callback) callback();
+    });
+  };
+
   async function run(client, name, work, callback) {
     if (active) return;
     active = true;
@@ -55,24 +124,10 @@
   plugins('daterangedelete').actions[0].description = 'Remove records from selected collections within the chosen date range.';
   plugins('daterangedelete').actions[0].code = function (client, callback) {
     return run(client, 'daterangedelete', async function (remove) {
-      var collection = $('#admin_daterange_collection').val();
-      var collections = collection === 'all' ? ['entries', 'treatments', 'devicestatus'] : [collection];
-      if (collections.some(function (item) { return !['entries', 'treatments', 'devicestatus'].includes(item); })) throw new Error('Invalid collection');
-      var startValue = $('#admin_daterange_start').val();
-      var endValue = $('#admin_daterange_end').val();
-      var profile = client.sbx && client.sbx.data && client.sbx.data.profile;
-      var zone = profile && profile.getTimezone();
-      var start = zone ? global.moment.tz(startValue, 'YYYY-MM-DD', true, zone) : global.moment(startValue, 'YYYY-MM-DD', true);
-      var end = zone ? global.moment.tz(endValue, 'YYYY-MM-DD', true, zone) : global.moment(endValue, 'YYYY-MM-DD', true);
-      if (!start.isValid() || !end.isValid() || start.isAfter(end)) throw new Error(client.translate('Please select valid dates'));
-      start.startOf('day'); end.endOf('day');
-      if (!global.confirm(client.translate('Delete records in date range') + ': ' + collections.join(', ') + ' / ' + startValue + ' – ' + endValue + '?')) return;
-      for (var item of collections) {
-        var field = item === 'entries' ? 'date' : 'created_at';
-        var query = new URLSearchParams();
-        query.set('find[' + field + '][$gte]', item === 'entries' ? String(start.valueOf()) : start.toISOString());
-        query.set('find[' + field + '][$lte]', item === 'entries' ? String(end.valueOf()) : end.toISOString());
-        await remove(item, query);
+      var range = selectedRange(client);
+      if (!global.confirm(client.translate('Delete records in date range') + ': ' + range.collections.join(', ') + ' / ' + range.startValue + ' – ' + range.endValue + '?')) return;
+      for (var item of range.collections) {
+        await remove(item, rangeQuery(range, item));
       }
     }, callback);
   };

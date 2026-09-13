@@ -1,5 +1,9 @@
 import { EntryStore } from "./entry-store";
 import { DexcomShareConnector } from "./dexcom-share-connector";
+import { SourceConnector } from "./source-connector";
+import { WebhookDelivery } from "./webhook-delivery";
+import { applyCsp, type CspEnvironment } from "./runtime/csp";
+import { resolveSourceConfig, type SourceEnvironment } from "./connectors/config";
 import mime from "mime";
 import qs from "qs";
 import type {
@@ -103,7 +107,7 @@ import {
   type DexcomShareEnvironment,
 } from "./dexcom-share";
 
-export { DexcomShareConnector, EntryStore };
+export { DexcomShareConnector, EntryStore, SourceConnector, WebhookDelivery };
 
 const MAX_BODY_BYTES = 512 * 1024;
 const DEFAULT_TENANT = "demo";
@@ -159,8 +163,9 @@ const SEEN_PERMISSIONS = [
   "notifications:loop:push",
 ] as const;
 
-type AppEnv = Omit<Env, "API_SECRET"> & DexcomShareEnvironment & {
+type AppEnv = Omit<Env, "API_SECRET"> & DexcomShareEnvironment & SourceEnvironment & CspEnvironment & {
   DEXCOM_SHARE_CONNECTOR: DurableObjectNamespace<DexcomShareConnector>;
+  SOURCE_CONNECTOR: DurableObjectNamespace<SourceConnector>;
   API_SECRET?: string;
   API3_MAX_LIMIT?: string;
   ALLOW_UNRESTRICTED_FRAME_EMBEDDING?: string;
@@ -3596,7 +3601,9 @@ async function handleNscfConnectStatus(
       { status: 405, headers: { "Allow": "GET, HEAD" } },
     );
   }
-  if (env.DEXCOM_SHARE_CONNECTOR === undefined) {
+  const sourceResolution = resolveSourceConfig(env);
+  const otherSource = sourceResolution.enabled || Boolean(sourceResolution.error);
+  if ((otherSource ? env.SOURCE_CONNECTOR : env.DEXCOM_SHARE_CONNECTOR) === undefined) {
     throw new ApiError(
       503,
       "dexcom_share_connector_not_configured",
@@ -3617,9 +3624,8 @@ async function handleNscfConnectStatus(
       "Dexcom Share connector is available only for the default tenant",
     );
   }
-  const body = await env.DEXCOM_SHARE_CONNECTOR
-    .getByName(tenant)
-    .statusJson(tenant);
+  const body = otherSource ? await env.SOURCE_CONNECTOR.getByName(tenant).statusJson(tenant)
+    : await env.DEXCOM_SHARE_CONNECTOR.getByName(tenant).statusJson(tenant);
   return withoutBodyForHead(
     request,
     new Response(body, {
@@ -3645,11 +3651,16 @@ function bootstrapDexcomShareConnector(
   ) {
     return;
   }
-  if (!resolveDexcomShareConfig(env).enabled) return;
+  const source = resolveSourceConfig(env);
+  const dexcom = resolveDexcomShareConfig(env);
+  if (!dexcom.enabled && !source.enabled) return;
   if (ctx === undefined) return;
   const tenant = resolveTenant(request, url);
   if (tenant !== DEFAULT_TENANT) return;
-  ctx.waitUntil(
+  if (source.enabled && env.SOURCE_CONNECTOR) ctx.waitUntil(env.SOURCE_CONNECTOR.getByName(tenant).reconcile(tenant).catch(() => {
+    console.error(JSON.stringify({ message: "Source connector bootstrap failed", tenant }));
+  }));
+  if (dexcom.enabled) ctx.waitUntil(
     env.DEXCOM_SHARE_CONNECTOR
       .getByName(tenant)
       .reconcile(tenant)
@@ -3684,6 +3695,17 @@ const application = {
       }
       if (url.pathname === "/_nscf/connect/status") {
         return await handleNscfConnectStatus(request, env, url);
+      }
+      if (url.pathname === '/report-violation' && request.method === 'POST') {
+        // Browser CSP reports can contain private URLs. Acknowledge without
+        // logging/storing them or reflecting arbitrary submitted text.
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/_nscf/webhook/status") {
+        if (request.method !== 'GET' && request.method !== 'HEAD') return json({ error: 'method_not_allowed' }, { status: 405, headers: { Allow: 'GET, HEAD' } });
+        await requirePermission(request, env, url, 'admin:api:permissions:read');
+        if (resolveTenant(request, url) !== DEFAULT_TENANT) throw new ApiError(404, 'webhook_not_available', 'Webhook is available only for the default tenant');
+        return withoutBodyForHead(request, new Response(await env.WEBHOOK_DELIVERY.getByName(DEFAULT_TENANT).statusJson(), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } }));
       }
       if (url.pathname === "/socket.io" || url.pathname === "/socket.io/") {
         const tenant = resolveTenant(request, url);
@@ -3751,11 +3773,6 @@ const application = {
 export default {
   async fetch(request: Request, env: AppEnv, ctx?: ExecutionContext): Promise<Response> {
     const response = await application.fetch(request, env, ctx);
-    // Preserve the WebSocket upgrade object; no HTML can be embedded here.
-    if (response.status === 101 || !["false", "off"].includes(String(env.ALLOW_UNRESTRICTED_FRAME_EMBEDDING).toLowerCase())) return response;
-    const secured = new Response(response.body, response);
-    secured.headers.set("X-Frame-Options", "SAMEORIGIN");
-    secured.headers.set("Content-Security-Policy", "frame-ancestors 'self'");
-    return secured;
+    return applyCsp(response, env);
   },
 } satisfies ExportedHandler<AppEnv>;

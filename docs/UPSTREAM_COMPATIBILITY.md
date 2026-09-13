@@ -1,6 +1,6 @@
 # Upstream compatibility matrix
 
-Last baseline audit: 2026-09-07 (15.0.8 testing branch)
+Last baseline audit: 2026-09-08 (15.0.8 testing branch)
 
 The current beta changes and controlled limits are recorded in
 [the 15.0.8 testing track](testing/NIGHTSCOUT_15_0_8.md). The detailed historical

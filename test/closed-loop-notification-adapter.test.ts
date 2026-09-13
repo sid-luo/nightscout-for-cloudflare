@@ -106,3 +106,14 @@ describe("Cloudflare closed-loop notification scheduler adapter", () => {
     expect(evaluation.nextDueAt).toBe(future);
   });
 });
+
+it.each([['GMT+5:30','2026-07-20T01:30:00Z'], ['GMT+5:45','2026-07-20T01:15:00Z']])(
+  'keeps pump quiet-night alarm scheduling aligned for %s', (timezone,expected) => {
+    const now=Date.parse('2026-07-20T00:00:00Z');
+    const profile=createNightscoutProfileFunctions([{timezone}]);
+    const evaluation=calculateClosedLoopNotificationEvaluation([
+      {mills:now,device:'synthetic-offset',pump:{clock:new Date(now).toISOString(),reservoir:50,battery:{percent:10},status:{status:'normal'}}},
+    ],[],profile,now,60000,{pump:{preferences:{enableAlerts:true,warnBattQuietNight:true,warnClock:1000,urgentClock:2000},settings:{dayStart:7,dayEnd:21}}});
+    expect(evaluation.notifications).toEqual([]);
+    expect(evaluation.nextDueAt).toBe(Date.parse(expected));
+  });

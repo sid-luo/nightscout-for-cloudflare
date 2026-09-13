@@ -176,13 +176,13 @@ test("the locked repository manifest is stable and validates all 157 test files"
   assert.equal(first.routes.length, 163);
   assert.equal(first.tests.length, 157);
   assert.equal(serializeManifest(first), serializeManifest(second));
-  assert.equal(first.tests.filter((item) => item.status === "pass").length, 44);
+  assert.equal(first.tests.filter((item) => item.status === "pass").length, 43);
   assert.equal(first.tests.filter((item) => item.status === "adapted").length, 90);
   assert.deepEqual(first.statistics.tests_by_status, {
-    pass: 44,
+    pass: 43,
     adapted: 90,
     "excluded-fixed-scope": 1,
-    unresolved: 22,
+    unresolved: 23,
   });
   for (const file of [
     "vendor/nightscout/tests/api.aaps-client.test.js",
@@ -280,12 +280,12 @@ test("the locked repository manifest is stable and validates all 157 test files"
     "vendor/nightscout/tests/mongo-pool-config.test.js",
     "vendor/nightscout/tests/pluginbase.modern.test.js",
     "vendor/nightscout/tests/profileeditor.test.js",
-    "vendor/nightscout/tests/reports.test.js",
     "vendor/nightscout/tests/reportstorage.test.js",
     "vendor/nightscout/tests/utils.test.js",
   ]) {
     assert.equal(first.tests.find((item) => item.file === file)?.status, "pass", file);
   }
+  assert.equal(first.tests.find((item) => item.file === "vendor/nightscout/tests/reports.test.js")?.status, "unresolved");
   assert.deepEqual(
     first.tests
       .filter((item) => item.status === "excluded-fixed-scope")

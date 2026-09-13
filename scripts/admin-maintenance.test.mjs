@@ -6,19 +6,19 @@ import vm from 'node:vm';
 const require = createRequire(import.meta.url);
 const moment = require('../vendor/nightscout/node_modules/moment-timezone');
 const source = readFileSync(new URL('../platform/admin-maintenance.js', import.meta.url), 'utf8');
-function fixture(results, authenticated = true) {
+function fixture(results, authenticated = true, zone = 'America/Los_Angeles') {
   const values = { '#admin_profile_records_keep': '10', '#admin_daterange_collection': 'all',
     '#admin_daterange_start': '2026-03-08', '#admin_daterange_end': '2026-03-08' };
-  const text = {}; const calls = []; const plugins = {};
-  const $ = selector => ({ val: () => values[selector], show() { return this; }, text(value) { text[selector] = value; return this; } });
+  const text = {}; const calls = []; const plugins = {}; const handlers = {};
+  const $ = selector => ({ val: () => values[selector], show() { return this; }, text(value) { text[selector] = value; return this; }, off() { return this; }, on(event, handler) { handlers[selector + event] = handler; return this; } });
   $.ajax = async request => { calls.push(request); const result = results.shift(); if (result instanceof Error) throw result; return result; };
   let confirmed = true;
-  const window = { Nightscout: { admin_plugins: name => plugins[name] ??= { actions: [{}] } },
+  const window = { Nightscout: { admin_plugins: name => plugins[name] ??= { actions: [{ init: (client, done) => done() }] } },
     jQuery: $, moment, location: { search: '?tenant=isolated' }, confirm: () => confirmed };
   vm.runInNewContext(source, { window, URLSearchParams });
   const client = { hashauth: { isAuthenticated: () => authenticated }, headers: () => ({ 'api-secret': 'test-digest' }),
-    translate: (value, options) => value.replace('%1', options?.params[0]), sbx: { data: { profile: { getTimezone: () => 'America/Los_Angeles' } } } };
-  return { plugins, client, calls, text, cancel: () => { confirmed = false; } };
+    translate: (value, options) => value.replace('%1', options?.params[0]), sbx: { data: { profile: { getTimezone: () => zone } } } };
+  return { plugins, client, calls, text, handlers, values, cancel: () => { confirmed = false; } };
 }
 test('profile cleanup repeats only until complete and sums confirmed counts', async () => {
   const f = fixture([{ n: 64, more: true }, { n: 3, more: false }]); let completed = 0;
@@ -58,4 +58,30 @@ test('cancellation and unauthenticated actions perform no writes', async () => {
     await f.plugins.daterangedelete.actions[0].code(f.client, () => complete++);
     assert.equal(f.calls.length, 0); assert.equal(complete, 1);
   }
+});
+
+for (const [zone, expected] of [['+05:30','2026-03-07T18:30:00.000Z'], ['+05:45','2026-03-07T18:15:00.000Z'], ['-03:30','2026-03-08T03:30:00.000Z']]) {
+  test('preview and delete share fixed-offset day bounds '+zone, async () => {
+    const f=fixture([[],[],[],{n:0,more:false},{n:0,more:false},{n:0,more:false}],true,zone);
+    f.plugins.daterangedelete.actions[0].init(f.client);
+    await f.handlers['#admin_daterange_previewclick']();
+    assert.equal(f.text['#admin_daterange_preview_count'],'entries: 0 | treatments: 0 | devicestatus: 0 | Total: 0');
+    await f.plugins.daterangedelete.actions[0].code(f.client);
+    assert.equal(f.calls.length,6);
+    for(let i=0;i<3;i++) {
+      const before=new URL(f.calls[i].url,'https://example.test').searchParams;
+      const after=new URL(f.calls[i+3].url,'https://example.test').searchParams;
+      const key=i===0?'date':'created_at';
+      assert.equal(before.get('find['+key+'][$gte]'),i===0?String(Date.parse(expected)):expected);
+      assert.equal(before.get('find['+key+'][$gte]'),after.get('find['+key+'][$gte]'));
+      assert.equal(before.get('find['+key+'][$lte]'),after.get('find['+key+'][$lte]'));
+      assert.equal(before.get('tenant'),'isolated');
+    }
+  });
+}
+test('invalid calendar dates never reach preview or mutation',async()=>{
+ const f=fixture([]);f.values['#admin_daterange_start']='2026-02-30';
+ f.plugins.daterangedelete.actions[0].init(f.client);
+ await f.handlers['#admin_daterange_previewclick']();await f.plugins.daterangedelete.actions[0].code(f.client);
+ assert.equal(f.calls.length,0);assert.match(f.text['#admin_daterange_preview_count'],/Error/);
 });

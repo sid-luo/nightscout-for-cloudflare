@@ -118,3 +118,20 @@ it('matches upstream framing opt-out on assets and API responses', async () => {
     expect(defaultResponse.headers.has('X-Frame-Options')).toBe(false);
   }
 });
+
+it('supports enforced and report-only CSP with configured frame origins', async () => {
+  const settings = { ...env, SECURE_CSP: 'true', FRAME_URL_1: 'https://one.example.test/dashboard?private=value',
+    FRAME_URL_2: 'https://one.example.test/other', FRAME_URL_3: 'https://user:password@bad.example.test',
+    FRAME_URL_4: 'javascript:alert(1)', FRAME_URL_5: '/clock/', ALLOW_UNRESTRICTED_FRAME_EMBEDDING: 'false' };
+  const enforced = await worker.fetch(new Request('https://example.test/split/'), settings);
+  const policy = enforced.headers.get('Content-Security-Policy');
+  expect(policy).toContain("frame-src 'self' https://one.example.test");
+  expect(policy).toContain("frame-ancestors 'self'");
+  expect(policy).toContain("object-src 'none'");
+  expect(policy).not.toMatch(/private|password|bad\.example|javascript/);
+  const reported = await worker.fetch(new Request('https://example.test/split/'), { ...settings, SECURE_CSP_REPORT_ONLY: 'true' });
+  expect(reported.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'");
+  expect(reported.headers.get('Content-Security-Policy-Report-Only')).toContain("frame-src 'self' https://one.example.test");
+  const report = await worker.fetch(new Request('https://example.test/report-violation', { method: 'POST', body: JSON.stringify({ 'document-uri': 'private' }) }), settings);
+  expect(report.status).toBe(204); expect(await report.text()).toBe('');
+});

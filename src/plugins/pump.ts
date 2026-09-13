@@ -1,3 +1,4 @@
+import { profileTimezoneFormatter } from "../runtime/timezone";
 import type { NightscoutProfileFunctions } from "../profile-functions";
 import type { RealtimeDocument } from "../realtime/ddata-snapshot";
 import { NONE, URGENT, WARN, levelToStatusClass } from "../runtime/levels";
@@ -135,13 +136,12 @@ function timezoneHour(now: number, timezone: string | undefined): number {
     return date.getHours() + date.getMinutes() / 60 + date.getSeconds() / 3600;
   }
   try {
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: timezone,
+    const parts = profileTimezoneFormatter("en-GB", {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
       hourCycle: "h23",
-    }).formatToParts(new Date(now));
+    }, timezone).formatToParts(new Date(now));
     const read = (type: Intl.DateTimeFormatPartTypes): number =>
       Number(parts.find((part) => part.type === type)?.value ?? 0);
     return read("hour") + read("minute") / 60 + read("second") / 3600;
