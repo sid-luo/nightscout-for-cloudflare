@@ -247,8 +247,6 @@ export function migrateRealtimeSessions(storage: DurableObjectStorage): void {
       created_at INTEGER NOT NULL,
       PRIMARY KEY (sid, sequence)
     );
-    CREATE INDEX IF NOT EXISTS realtime_outbound_by_session
-      ON realtime_outbound_packets(sid, sequence);
     CREATE TABLE IF NOT EXISTS realtime_websocket_closures (
       sid TEXT PRIMARY KEY,
       close_code INTEGER NOT NULL,
@@ -266,6 +264,15 @@ export function migrateRealtimeSessions(storage: DurableObjectStorage): void {
   migrateRealtimeRootUpdatesV11(storage);
   migrateRealtimeWriteAuthorityV12(storage);
   migrateRealtimeNotificationStateV13(storage);
+}
+
+/**
+ * The composite PRIMARY KEY already indexes every FIFO lookup by sid/sequence.
+ * Retire only its duplicate secondary index; pending frames, their primary key,
+ * durable acknowledgement, and all session counters remain unchanged.
+ */
+export function migrateRealtimeOutboundIndexV29(storage: DurableObjectStorage): void {
+  storage.sql.exec("DROP INDEX IF EXISTS realtime_outbound_by_session");
 }
 
 interface SchemaRow {

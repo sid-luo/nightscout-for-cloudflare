@@ -6,7 +6,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
-import type { EntryStore } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore } from "../src/entry-store";
 import {
   decodeEngineIoV4Handshake,
   decodeEngineIoV4Packet,
@@ -1629,7 +1629,8 @@ describe("realtime transport schema migration", () => {
         now + 45_000,
       );
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id IN (7, 28)",
+        "DELETE FROM _sql_schema_migrations WHERE id IN (7, ?)",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
       state.storage.sql.exec(
         "INSERT OR IGNORE INTO _sql_schema_migrations (id) VALUES (6)",
@@ -1689,7 +1690,8 @@ describe("realtime transport schema migration", () => {
         createdAt,
       );
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id IN (8, 28)",
+        "DELETE FROM _sql_schema_migrations WHERE id IN (8, ?)",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
       state.storage.sql.exec(
         "INSERT OR IGNORE INTO _sql_schema_migrations (id) VALUES (7)",

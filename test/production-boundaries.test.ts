@@ -5,7 +5,7 @@ import {
   SELF,
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { EntryStore } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore } from "../src/entry-store";
 import { parseEntryPayload } from "../src/model";
 
 const RETIRED_TEST_DEVICE = "simulator://nscf-test";
@@ -62,7 +62,7 @@ describe("production runtime boundaries", () => {
         INSERT INTO simulated_cgm_state
           (singleton, enabled, next_at, sequence, updated_at)
         VALUES (1, 1, ${now + 300_000}, 1, ${now});
-        DELETE FROM _sql_schema_migrations WHERE id IN (22, 28);
+        DELETE FROM _sql_schema_migrations WHERE id IN (22, ${ENTRY_STORE_ACTIVATION_SEAL});
       `);
     });
 
@@ -104,7 +104,7 @@ describe("production runtime boundaries", () => {
         INSERT OR REPLACE INTO plugin_runtime_state
           (plugin, body, updated_at)
         VALUES ('connect-dexcomshare', '{}', 1);
-        DELETE FROM _sql_schema_migrations WHERE id IN (24, 28);
+        DELETE FROM _sql_schema_migrations WHERE id IN (24, ${ENTRY_STORE_ACTIVATION_SEAL});
       `);
     });
 
@@ -132,7 +132,7 @@ describe("production runtime boundaries", () => {
         INSERT OR REPLACE INTO data_update_debounce
           (kind, burst_started_at, last_event_at, due_at, pending)
         VALUES ('plugin-notifications', 1, 1, 1, 1);
-        DELETE FROM _sql_schema_migrations WHERE id IN (27, 28);
+        DELETE FROM _sql_schema_migrations WHERE id IN (27, ${ENTRY_STORE_ACTIVATION_SEAL});
       `);
     });
 

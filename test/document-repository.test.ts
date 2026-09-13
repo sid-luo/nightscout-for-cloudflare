@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { EntryStore, JsonDocument } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore, type JsonDocument } from "../src/entry-store";
 import type {
   Api3MutationDecision,
   Api3MutationOptions,
@@ -370,7 +370,7 @@ describe("SQLite collection contract v4", () => {
           ALTER TABLE document_changes_old_v4 RENAME TO document_changes;
           DROP TABLE documents;
           ALTER TABLE documents_old_v4 RENAME TO documents;
-          DELETE FROM _sql_schema_migrations WHERE id = 28;
+          DELETE FROM _sql_schema_migrations WHERE id = ${ENTRY_STORE_ACTIVATION_SEAL};
         `);
       });
       expect(state.storage.sql.exec<{ count: number }>(

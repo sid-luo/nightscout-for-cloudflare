@@ -840,14 +840,12 @@ export class RealtimeSessionService {
     if (!applicationPacketProcessed && outbound.length === 0) {
       const now = this.now();
       const result = this.storage.transactionSync(() => {
-        const current = this.repository.getSession(sid);
-        if (
-          current === null
-          || current.transport !== REALTIME_TRANSPORT
-          || current.engineProtocol !== engineProtocol
-        ) {
-          return new RealtimeSessionError("unknown_sid", "session ID is unknown");
-        }
+        // No application packet means the loop above never awaited a handler.
+        // This is still the same synchronous turn as requireLiveSession(); no
+        // other RPC can replace the durable POST lease between these reads.
+        // Keep the persisted lease and its deadline checks, but reuse that
+        // fresh row instead of selecting the identical session again.
+        const current = initial;
         this.applyPollingHeartbeat(current, now);
         if (
           current.expiresAt <= now
@@ -1130,7 +1128,12 @@ export class RealtimeSessionService {
         REALTIME_TRANSPORT,
         engineProtocol,
       );
-      const immediate = this.repository.dequeuePayload(sid);
+      // The fresh row and queue counters were read in this same synchronous
+      // transaction. An empty queue needs neither another session SELECT nor
+      // a payload lookup. After the long-poll await we read a fresh row again.
+      const immediate = session.outboundPackets === 0
+        ? null
+        : this.repository.dequeuePayload(sid);
       if (immediate !== null) {
         this.touchPollingSessionIfDue(session, startedAt);
         return { immediate, waitMs: 0 };
@@ -1172,7 +1175,9 @@ export class RealtimeSessionService {
         REALTIME_TRANSPORT,
         engineProtocol,
       );
-      let payload = this.repository.dequeuePayload(sid);
+      let payload = session.outboundPackets === 0
+        ? null
+        : this.repository.dequeuePayload(sid);
       if (payload === null) payload = this.pollingPingPayloadIfDue(session, now);
       if (payload === null) {
         // A bounded wake without application data is represented by EIO noop.

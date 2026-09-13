@@ -5,7 +5,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { EntryStore } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore } from "../src/entry-store";
 import {
   decodeEngineIoV4Handshake,
   decodeEngineIoV4Packet,
@@ -680,7 +680,8 @@ describe("API3 /alarm Socket.IO namespace", () => {
         DROP TABLE realtime_alarm_connections;
       `);
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id IN (10, 28)",
+        "DELETE FROM _sql_schema_migrations WHERE id IN (10, ?)",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
       state.storage.sql.exec(
         "INSERT OR IGNORE INTO _sql_schema_migrations (id) VALUES (99)",

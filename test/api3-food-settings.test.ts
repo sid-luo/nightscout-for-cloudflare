@@ -9,7 +9,7 @@ import {
   matchApi3FoodRoute,
   matchApi3SettingsRoute,
 } from "../src/api3/treatments";
-import type { EntryStore } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore } from "../src/entry-store";
 
 /**
  * Differential contract sources, locked to Nightscout v15.0.7 commit
@@ -466,7 +466,8 @@ describe("API v3 Food and Settings verticals", () => {
         date,
       );
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id = 28",
+        "DELETE FROM _sql_schema_migrations WHERE id = ?",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
     });
 

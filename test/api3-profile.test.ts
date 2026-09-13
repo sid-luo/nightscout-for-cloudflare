@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { SELF, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { matchApi3ProfileRoute } from "../src/api3/treatments";
-import type { EntryStore } from "../src/entry-store";
+import { ENTRY_STORE_ACTIVATION_SEAL, type EntryStore } from "../src/entry-store";
 
 /**
  * Differential contract sources, locked to Nightscout v15.0.7 commit
@@ -806,7 +806,8 @@ describe("API v3 Profile vertical slice", () => {
         date,
       );
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id = 28",
+        "DELETE FROM _sql_schema_migrations WHERE id = ?",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
     });
 

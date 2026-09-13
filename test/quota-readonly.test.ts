@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ENTRY_STORE_ACTIVATION_SEAL,
   entryStoreSchemaIsActivationReady,
   entryStoreSchemaSupportsCoreReadOnly,
   entryStoreSchemaSupportsReadOnly,
@@ -66,7 +67,8 @@ describe("SQLite write-quota read-only fallback", () => {
     );
     await runInDurableObject(stub, async (instance: EntryStore, state) => {
       state.storage.sql.exec(
-        "DELETE FROM _sql_schema_migrations WHERE id IN (22, 28)",
+        "DELETE FROM _sql_schema_migrations WHERE id IN (22, ?)",
+        ENTRY_STORE_ACTIVATION_SEAL,
       );
       state.storage.sql.exec(
         "DELETE FROM realtime_root_state WHERE singleton = 1",
@@ -141,7 +143,8 @@ describe("SQLite write-quota read-only fallback", () => {
       );
       await runInDurableObject(stub, async (instance: EntryStore, state) => {
         state.storage.sql.exec(
-          "DELETE FROM _sql_schema_migrations WHERE id = 28",
+          "DELETE FROM _sql_schema_migrations WHERE id = ?",
+          ENTRY_STORE_ACTIVATION_SEAL,
         );
         const internal = instance as unknown as {
           storageWriteQuotaBlockedUntil: number;

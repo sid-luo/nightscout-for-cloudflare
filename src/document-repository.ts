@@ -1333,8 +1333,6 @@ export function migrateDocumentsV4(sql: SqlStorage): void {
       ON documents(collection, srv_modified DESC);
     CREATE INDEX IF NOT EXISTS documents_collection_effective_modified
       ON documents(collection, effective_modified DESC, id ASC);
-    CREATE INDEX IF NOT EXISTS document_changes_collection_history
-      ON document_changes(collection, srv_modified ASC, change_id ASC);
     CREATE INDEX IF NOT EXISTS document_changes_document
       ON document_changes(collection, id, revision);
   `);
@@ -1935,6 +1933,16 @@ export function migrateEntriesV6(sql: SqlStorage): void {
     `);
   }
 }
+/**
+ * API3 history reads current documents through effective_modified. The
+ * revision ledger is read only by collection/id/revision, which retains its
+ * own index. Remove the unused timestamp index without touching a revision,
+ * its AUTOINCREMENT sequence, or any canonical document.
+ */
+export function migrateDocumentWriteIndexesV29(sql: SqlStorage): void {
+  sql.exec("DROP INDEX IF EXISTS document_changes_collection_history");
+}
+
 export class SqliteDocumentRepository {
   constructor(
     private readonly storage: DurableObjectStorage,

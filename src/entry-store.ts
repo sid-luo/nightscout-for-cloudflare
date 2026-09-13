@@ -38,6 +38,7 @@ import {
   migrateEntriesV6,
   migrateDocumentsV4,
   migrateEffectiveModifiedV26,
+  migrateDocumentWriteIndexesV29,
   DocumentQueryError,
   SqliteDocumentRepository,
   type Api3CollectionName,
@@ -75,6 +76,7 @@ import {
   migrateRealtimeProtocolsV19,
   migrateRealtimeJsonpV21,
   migrateRealtimeWriteAuthorityV12,
+  migrateRealtimeOutboundIndexV29,
 } from "./realtime/session-repository";
 import {
   RealtimeSessionError,
@@ -232,7 +234,7 @@ type EntryStoreEnv = Env
   UUID_HANDLING?: string;
 };
 
-export const ENTRY_STORE_ACTIVATION_SEAL = 28;
+export const ENTRY_STORE_ACTIVATION_SEAL = 30;
 
 const ENTRY_STORE_REQUIRED_MIGRATIONS = [
   1,
@@ -259,6 +261,7 @@ const ENTRY_STORE_REQUIRED_MIGRATIONS = [
   24,
   26,
   27,
+  29,
   ENTRY_STORE_ACTIVATION_SEAL,
 ] as const;
 
@@ -565,6 +568,18 @@ function realtimeNumericMeasurementSql(path: "$.mbg" | "$.sgv"): string {
     OR ${type} = 'true')`;
 }
 
+function realtimeSgvQuery(frame: boolean, limit: 64 | 1000): string {
+  return `SELECT id, body, sort_time
+       FROM documents
+       WHERE collection = 'entries'
+         AND sort_time >= ?
+         ${frame ? "AND sort_time <= ?" : ""}
+         AND ${realtimeNumericMeasurementSql("$.sgv")}
+         AND NOT ${realtimeJsonTruthySql("$.mbg")}
+       ORDER BY sort_time DESC, id ASC
+       LIMIT ${limit}`;
+}
+
 function documentSortTime(document: JsonDocument): number {
   for (const field of ["date", "mills", "created_at", "timestamp", "startDate"]) {
     const value = document[field];
@@ -779,7 +794,8 @@ class RealtimeJsonBudget {
 
 export class EntryStore extends DurableObject<EntryStoreEnv> {
   private readonly realtime: RealtimeSessionService;
-  private readonly realtimeEntryQueries = new RealtimeEntryQueryCache<DbDocument>();
+  private realtimeEntryQueries = new RealtimeEntryQueryCache<DbDocument>();
+  private entryCacheMutation = false;
   private realtimeDeviceStatusQueries = new DeviceStatusQueryCache<DbDocument>();
   private deviceStatusCacheMutation = false;
   private readonly activeWebSocketSessions = new Set<string>();
@@ -854,7 +870,18 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     }
   }
 
+  private migrateWriteIndexesV29(): void {
+    const applied = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT EXISTS(SELECT 1 FROM _sql_schema_migrations WHERE id = 29) AS present",
+    ).one().present !== 0;
+    if (applied) return;
+    migrateRealtimeOutboundIndexV29(this.ctx.storage);
+    migrateDocumentWriteIndexesV29(this.ctx.storage.sql);
+    this.ctx.storage.sql.exec("INSERT INTO _sql_schema_migrations (id) VALUES (29)");
+  }
+
   private migrate(): void {
+    let upgradedSealedSchema = false;
     this.ctx.storage.transactionSync(() => {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS _sql_schema_migrations (
@@ -867,6 +894,17 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           "SELECT COALESCE(MAX(id), 0) AS version FROM _sql_schema_migrations",
         )
         .one().version;
+
+      if (version >= 28 && sqliteMigrationMarkersPresent(this.ctx.storage.sql, [
+        ...ENTRY_STORE_REQUIRED_MIGRATIONS.filter((id) => id < 28), 28,
+      ])) {
+        // The previous activation seal proves the data/schema repairs already
+        // completed. This index-only upgrade must not scan or backfill history
+        // again, nor rebuild an unchanged persisted realtime snapshot.
+        this.migrateWriteIndexesV29();
+        upgradedSealedSchema = true;
+        return;
+      }
 
       if (version < 1) {
         this.ctx.storage.sql.exec(`
@@ -1097,6 +1135,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         );
       }
 
+      this.migrateWriteIndexesV29();
+
       // This named, idempotent auth state is intentionally independent of the
       // numeric migration sequence. Delay-list state can safely repair itself
       // even when a later branch has already advanced MAX(id).
@@ -1110,7 +1150,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           ON authorization_failures(updated_at, ip);
       `);
     });
-    this.realtime.synchronizeRootDataSnapshot();
+    if (!upgradedSealedSchema) this.realtime.synchronizeRootDataSnapshot();
   }
 
   private enterStorageWriteQuotaMode(error: unknown): boolean {
@@ -1873,7 +1913,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     return new SqliteDocumentRepository(
       this.ctx.storage,
       (event) => {
-        if (event.collection === "entries") this.realtimeEntryQueries.clear();
+        if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
         if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
           this.realtimeDeviceStatusQueries.clear();
         }
@@ -1882,19 +1922,66 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         } finally {
           // A snapshot may have read uncommitted entries. Do not let those
           // values survive a later rollback of the caller's transaction.
-          if (event.collection === "entries") this.realtimeEntryQueries.clear();
+          if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
           if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
             this.realtimeDeviceStatusQueries.clear();
           }
         }
       },
       (collection, document) => {
+        if (collection === "entries") this.updateEntryQueryCache(document);
         if (collection === "devicestatus") {
           this.updateDeviceStatusQueryCache(document);
         }
         this.recordDataMutationInTransaction(collection);
       },
     );
+  }
+
+  private updateEntryQueryCache(document?: JsonDocument): void {
+    if (!this.entryCacheMutation || document === undefined) {
+      this.realtimeEntryQueries.clear();
+      return;
+    }
+    if (!this.realtimeEntryQueries.ready) return;
+    let id = typeof document._id === "string" ? document._id : undefined;
+    if (id === undefined && typeof document.identifier === "string") {
+      const rows = this.ctx.storage.sql.exec<{ id: string }>(
+        "SELECT id FROM documents WHERE collection = 'entries' AND identifier = ? LIMIT 2",
+        document.identifier,
+      ).toArray();
+      if (rows.length === 1) id = rows[0]!.id;
+    }
+    if (id === undefined) {
+      this.realtimeEntryQueries.clear();
+      return;
+    }
+    const canonicalId = id;
+    this.realtimeEntryQueries.upsert(canonicalId, (query, lower) => {
+      const where = "WHERE collection = 'entries'";
+      if (!query.includes(where)) return null;
+      // Preserve SQLite's numeric/boolean/string predicates exactly. Adding
+      // the canonical primary key bounds this to one row, not the time window.
+      return this.ctx.storage.sql.exec<DbDocument>(
+        query.replace(where, `${where} AND id = ?`), canonicalId, lower,
+      ).toArray()[0];
+    });
+  }
+
+  private withEntryCacheMutation<T>(collection: string, operation: () => T): T {
+    if (collection !== "entries") return operation();
+    const committed = this.realtimeEntryQueries;
+    const previousMutation = this.entryCacheMutation;
+    this.realtimeEntryQueries = committed.fork();
+    this.entryCacheMutation = true;
+    try {
+      return operation();
+    } catch (error) {
+      this.realtimeEntryQueries = committed;
+      throw error;
+    } finally {
+      this.entryCacheMutation = previousMutation;
+    }
   }
 
   private updateDeviceStatusQueryCache(document?: JsonDocument): void {
@@ -2081,7 +2168,6 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private recordDataMutationInTransaction(collection: string): void {
-    if (collection === "entries") this.realtimeEntryQueries.clear();
     const tasks = this.backgroundTasks();
     const now = Date.now();
     const runtime = this.resolvedAutomaticNotificationRuntime(now);
@@ -2146,17 +2232,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     };
     const budget = new RealtimeJsonBudget(result);
     if (runtime.ar2 || runtime.simpleAlarms || runtime.errorCodes || runtime.timeAgo) {
-      for (const row of this.ctx.storage.sql.exec<DbDocument>(
-        `SELECT id, body, sort_time
-         FROM documents
-         WHERE collection = 'entries'
-           AND sort_time >= ?
-           AND ${realtimeNumericMeasurementSql("$.sgv")}
-           AND NOT ${realtimeJsonTruthySql("$.mbg")}
-         ORDER BY sort_time DESC, id ASC
-         LIMIT 64`,
-        now - REALTIME_ENTRY_WINDOW_MS,
-      )) {
+      for (const row of this.cachedRecentSgvRows(now)) {
         const entry = toPublicEntry(toDocument(row));
         const raw = entry as PublicEntry & Record<string, unknown>;
         if (raw.mbg) continue;
@@ -3001,7 +3077,16 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     const lower = now - REALTIME_ENTRY_WINDOW_MS;
     return this.realtimeEntryQueries.read(sql, lower, frame, () =>
       this.ctx.storage.sql.exec<DbDocument>(sql, ...(frame ? [lower, now] : [lower])),
+      1000,
     );
+  }
+
+  private cachedRecentSgvRows(now: number): Iterable<DbDocument> {
+    const lower = now - REALTIME_ENTRY_WINDOW_MS;
+    // Reuse only a complete, compatible root query. A cold properties or
+    // notification read must not fill the 1000-row cache with just 64 rows.
+    return this.realtimeEntryQueries.peek(realtimeSgvQuery(false, 1000), lower, 64)
+      ?? this.ctx.storage.sql.exec<DbDocument>(realtimeSgvQuery(false, 64), lower);
   }
 
   private realtimeSnapshot(
@@ -3027,17 +3112,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     // materialized with toArray() before accounting.
     let budget = new RealtimeJsonBudget(snapshot);
     const entryUpperClause = frame ? "AND sort_time <= ?" : "";
-    for (const row of this.cachedRealtimeEntries(now, frame,
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         ${entryUpperClause}
-         AND ${realtimeNumericMeasurementSql("$.sgv")}
-         AND NOT ${realtimeJsonTruthySql("$.mbg")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 1000`,
-    )) {
+    for (const row of this.cachedRealtimeEntries(now, frame, realtimeSgvQuery(frame, 1000))) {
       const entry = toPublicEntry(toDocument(row));
       const raw = entry as PublicEntry & Record<string, unknown>;
       if (raw.mbg) continue;
@@ -3289,17 +3364,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     };
     let budget = new RealtimeJsonBudget(context);
 
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         AND ${realtimeNumericMeasurementSql("$.sgv")}
-         AND NOT ${realtimeJsonTruthySql("$.mbg")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 64`,
-      now - REALTIME_ENTRY_WINDOW_MS,
-    )) {
+    for (const row of this.cachedRecentSgvRows(now)) {
       const entry = toPublicEntry(toDocument(row));
       const raw = entry as PublicEntry & Record<string, unknown>;
       if (raw.mbg) continue;
@@ -4396,9 +4461,15 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   async putEntries(entries: ValidatedEntry[]): Promise<WriteResult> {
-    let mutations: ReturnType<SqliteDocumentRepository["upsertLegacyEntries"]>;
+    const mutations: ReturnType<SqliteDocumentRepository["upsertLegacyEntries"]> = [];
     try {
-      mutations = this.documentRepository().upsertLegacyEntries(entries);
+      const repository = this.documentRepository();
+      for (const entry of entries) {
+        // Each legacy ordered-batch item owns its transaction. A later failed
+        // item must retain both the stored prefix and its committed cache.
+        mutations.push(...this.withEntryCacheMutation("entries", () =>
+          repository.upsertLegacyEntries([entry])));
+      }
     } finally {
       // Ordered Mongo-compatible batches can commit a successful prefix before
       // a later item fails. Publish that resulting state in both outcomes.
@@ -5104,8 +5175,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.withDeviceStatusCacheMutation(collection, () =>
-          this.documentRepository().createDocumentForApi3(collection, document, options)),
+        this.withEntryCacheMutation(collection, () =>
+          this.withDeviceStatusCacheMutation(collection, () =>
+            this.documentRepository().createDocumentForApi3(collection, document, options))),
       );
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
@@ -5131,12 +5203,12 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.documentRepository().replaceDocumentForApi3(
+        this.withEntryCacheMutation(collection, () => this.documentRepository().replaceDocumentForApi3(
           collection,
           identity,
           document,
           options,
-        ),
+        )),
       );
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
@@ -5162,12 +5234,12 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.documentRepository().patchDocumentForApi3(
+        this.withEntryCacheMutation(collection, () => this.documentRepository().patchDocumentForApi3(
           collection,
           identity,
           patch,
           options,
-        ),
+        )),
       );
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
