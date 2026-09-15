@@ -3,8 +3,11 @@
 NSCF version: **1.3.0-beta.2**. Development branch:
 [`ns-15.0.8/ns4cf-1.3-beta`](https://github.com/sid-luo/nightscout-for-cloudflare/tree/ns-15.0.8/ns4cf-1.3-beta).
 Beta refers to the NSCF adaptation; official Nightscout 15.0.8 is a stable upstream release.
-This is an independent testing track from stable NSCF 1.2.0. No stable Release,
-production deployment or installer publication is part of this work.
+This remains a Beta release. GitHub `main` now provides 1.3.0-beta.2; the previous
+stable version remains available at [v1.2.0](https://github.com/sid-luo/nightscout-for-cloudflare/tree/v1.2.0).
+The web installer and upgrade service now provide beta.2. See the
+[Beta release notes](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.0-beta.2).
+Existing user instances are not upgraded automatically.
 
 ## What changed
 
@@ -45,6 +48,90 @@ production deployment or installer publication is part of this work.
 - Prerelease builds cannot auto-refresh themselves from the stable source
   channel, even when `NSCF_AUTO_UPDATE=1` is set. The default Worker name in
   this branch is `nscf-nightscout-beta`.
+
+## Web installation and in-place upgrade acceptance — 2026-09-15
+
+The Chinese and English installer backends and embedded package now provide
+**1.3.0-beta.2**. Both sites retain their existing pages, styles, scripts and
+OAuth flows; the displayed release version comes from the current package.
+Published pages and package files were read back and checked against local
+hashes. Installer settings, bindings, callback URLs and authorization scopes
+were preserved.
+
+- Independent Cloudflare resources were created from the actual 1.2.0 package,
+  populated with synthetic records, and upgraded through the real installer
+  backend. The `v2` to `v4` migration added only SourceConnector and
+  WebhookDelivery; EntryStore and Dexcom namespace IDs were unchanged.
+- The original Pages address, API value, settings, records, revision history,
+  server timestamps, ETags and lastModified values were preserved. After the
+  upgrade, authenticated uploads and reads worked; repeating a synthetic
+  upload did not create a duplicate record.
+- A deliberately incorrect `If-Match` returned HTTP 412 without changing the
+  fixture. A lost successful upload response was recovered by reading back
+  the committed release. Repeating finish did not upload or migrate again.
+- A separate fresh Beta installation created four namespaces with a
+  plain-text API value and passed authenticated synthetic read/write checks.
+- Upgrade confirmation was corrected for cases where the program had already
+  been updated but the page still showed an unconfirmed result. Native
+  workerd regression tests cover confirmation requests and reject redirects.
+- An independent 1.2.0 fixture reproduced a Cloudflare settings update removing
+  the installation marker. The installer recovered its identity from matching
+  deployment history and original database bindings, then completed the
+  upgrade without changing the original address, databases, settings or API
+  value. Conflicting identities or changed original databases remain blocked.
+- The final installer regression passed **33 Node script tests and 139 Vitest
+  tests, including two tests using native workerd**, for **172 tests in total**.
+  Type checking and deployment dry-runs passed for both languages. These
+  installer checks are separate from the 991 application tests recorded below.
+
+The public upgrade page supports recognized web-installer instances whose
+`API_SECRET` is already plain text. A Secret binding is reported as ineligible
+until the user saves the same original value as ordinary text and checks
+again; the page does not offer automatic Secret conversion. GitHub-button
+installations and unknown storage layouts are not supported by this route.
+This acceptance used synthetic data, not a real user's medical records, and
+does not establish a database rollback path or every device's behavior.
+
+## Latest beta.2 cache revision and AAPS observations — 2026-09-13 to 2026-09-15
+
+Runtime source: `f9741107f49f2904b47eed119a6ec295ebdb5680`. These are previously
+recorded results; the September 15 README/Release editing did not rerun tests.
+
+- Latest complete Workers regression: **95 files / 991 tests passed**,
+  with TypeScript, upstream mapping audit and dry-run build checks passing.
+- A fixed synthetic fixture with 576 SGVs, 10,000 device-status records and
+  one browser subscriber measured a new SGV followed by an AAPS status upload:
+  **6,128 reads / 45 writes → 102 reads / 42 writes**. The baseline is the
+  earlier beta source `a45f8f3`, not a direct measurement of stable 1.2.0.
+  The 98.3% read reduction applies to this paired scenario, not daily usage.
+- A complete 10,000-status backfill retained all records, revisions, clocks
+  and pending output. Writes changed **160,001 → 150,001** while reads stayed
+  **410,098**. The revision removes redundant indexes, avoids repeated index
+  scans after activation, reuses raw entry projections and preserves cache
+  rollback when a write transaction fails.
+- Warm-cache and fresh-SQL outputs were compared through normal updates,
+  short interruptions, six-hour staleness, threshold transitions and recovery
+  for both v1 and v3. Original timestamps and alert timing are preserved.
+  The existing gap after the last SGV leaves the 48-hour window is unresolved.
+- A real AAPS client connected to an independent Worker using a **virtual
+  pump**. Upload confirmation, realtime return events and the phone queue
+  reaching zero were observed, followed by cross-day server-side continuity
+  and resource-usage checks. This does not validate every offline backfill,
+  physical pump, Loop/APNS flow or the specific BWP/historical COB scenarios.
+- Occasional internal connection-disconnect labels and one script exception
+  remain unresolved. Successful surrounding requests do not establish their
+  root cause or absence of transient impact.
+
+The 355 official client cases, 162 server-plugin cases, 13+33 report cases,
+11 browser report views and 56 mocked connector/job cases below are historical
+checks from their stated revisions. They are not an additional complete rerun
+of the latest cache change, nor proof of full upstream parity.
+
+The separately implemented and verified 1.2.0 to 1.3 Beta web upgrade path is
+recorded above. New installations use a visible `plain_text` `API_SECRET`;
+supported upgrades preserve its original value. HTTPS and protocol
+authentication are unchanged. Instances are not changed merely to convert
+their API setting.
 
 ## Beta.2 acceptance revision — 2026-09-09
 
@@ -171,20 +258,23 @@ For Cloudflare Git integration, select this testing branch and use
 `NSCF_AUTO_UPDATE=0` in the build environment. Select the intended test account,
 choose a unique Worker name, and set a separate `API_SECRET`. Keep the same
 **test** name/data space for later beta commits so testing data persists. The
-ordinary installer and README one-click links still deliver the stable track.
+web installer now provides **1.3.0-beta.2**. The GitHub deployment button follows
+the repository branch identified in the README.
 
-An independent maintainer test instance was deployed on 2026-09-08:
-https://nscf-nightscout-beta.qwjklqw2182j.workers.dev/ . The first deployment used the verified
+An independent maintainer test instance was deployed on 2026-09-08.
+The first deployment used the verified
 1.3.0-beta.1 prebuilt package (source commit `47ad24a`),
 with its own Worker, SQLite Durable Object namespaces and API secret.
 Anonymous data reads and writes are denied. The test credential is delivered
-privately, never committed here. Initial Profile setup and real-client
-acceptance remain the maintainer's next steps.
+privately, never committed here. At that initial deployment, Profile setup and
+real-client acceptance were still pending; see the latest dated section above
+for subsequent AAPS progress.
 
 The deployment uses a pinned prebuilt package through Wrangler; no automatic
 Git push deployment is configured. Subsequent verified beta packages should
 update this same test Worker so its URL and test data persist.
 `NSCF_AUTO_UPDATE=0` and source branch/commit markers are recorded on the
-test Worker. No production resources or stable GitHub Release have changed.
+test Worker. That September 8 test deployment did not change production
+resources or the stable GitHub Release.
 
 Official source: [15.0.8 release](https://github.com/nightscout/cgm-remote-monitor/releases/tag/v15.0.8).

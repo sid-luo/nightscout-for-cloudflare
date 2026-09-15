@@ -1,19 +1,21 @@
 # Changelog
 
-## 1.3.0-beta.2 — expanded 15.0.8 adaptation (testing only)
+## 1.3.0-beta.2 — Nightscout 15.0.8 adaptation and read/write optimization (2026-09-15, prerelease)
 
-Adds default-off Cloudflare adapters for Nightscout-source, LibreLinkUp, Glooko and Webhook, plus BRIDGE automatic migration and an explicit legacy protocol mode. Sessions, page cursors and delivery retries survive restart; real-service acceptance remains pending. Fixes fixed-offset Profile timezones and admin date bounds, adds enforced/report-only CSP with configured frame origins, and executes real upstream report modules for GMI/RMS and boundary regressions. The old skipped full-report suite is now honestly marked unresolved. See the [configuration guide](docs/CONFIGURATION.md) and [beta testing evidence](docs/testing/NIGHTSCOUT_15_0_8.md). Stable 1.2.0 and its installer are unchanged.
+Adds default-off Cloudflare adapters for Nightscout-source, LibreLinkUp, Glooko and Webhook, plus BRIDGE automatic migration and an explicit legacy protocol mode. Sessions, page cursors and delivery retries survive restart; real-service acceptance remains pending. Fixes fixed-offset Profile timezones and admin date bounds, adds enforced/report-only CSP with configured frame origins, and executes real upstream report modules for GMI/RMS and boundary regressions. The old skipped full-report suite is now honestly marked unresolved. See the [configuration guide](docs/CONFIGURATION.md) and [beta testing evidence](docs/testing/NIGHTSCOUT_15_0_8.md).
+
+This prerelease is now available from GitHub `main` and both web installers. It further reduces repeated database reads during AAPS synchronization and index writes during backfill, preserves cache consistency after failed writes, and fixes report counting, RMS, empty-hour results and daylight saving boundaries. The upgrade service also fixes unconfirmed completion results and recognizes older installations whose markers were removed by a Cloudflare settings update. Addresses, original databases, settings and API values are preserved during supported upgrades; existing instances are not upgraded automatically. See the [README](README.md) and [release notes](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.0-beta.2). The previous stable release remains available at [v1.2.0](https://github.com/sid-luo/nightscout-for-cloudflare/tree/v1.2.0).
 
 ## 1.3.0-beta.1 — Nightscout 15.0.8 testing track (unreleased)
 
-Independent testing branch only. Updates the unmodified upstream client and
+The initial beta.1 was an independent testing branch only. It updated the unmodified upstream client and
 source snapshot to 15.0.8, API3 to 3.0.5 and Socket.IO client to 4.8.3. Includes
 stored-text and XML output hardening, BWP/COB/OpenAPS/direction fixes, profile
 APNS environment selection, and bounded admin date-range/profile cleanup.
 Prerelease source builds stay pinned to their checkout. See the
 [testing track](docs/testing/NIGHTSCOUT_15_0_8.md) for evidence and limitations.
 
-No stable Release, installer publication or production deployment is part of this beta.
+At the initial beta.1 stage, no stable Release, installer publication or production deployment was included.
 
 
 **English** | [简体中文](CHANGELOG.zh-CN.md)

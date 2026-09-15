@@ -1,9 +1,11 @@
 # 更新日志
 
-## 1.3.0-beta.2 — 扩大 15.0.8 适配（仅测试分支）
+## 1.3.0-beta.2 — Nightscout 15.0.8 适配与读写优化（2026-09-15，测试版）
 
-新增默认关闭的 Nightscout-source、LibreLinkUp、Glooko 与 Webhook Cloudflare 适配；支持旧 BRIDGE 配置自动迁移和显式 legacy 协议。会话、同步游标及发送重试持久化，真实服务验收仍待进行。修复 Profile 固定偏移时区与日期清理边界，补齐可执行/仅报告 CSP 和配置分屏来源；直接执行官方报表模块验证 GMI/RMS、单位及边界。原先被跳过的整套报表测试已纠正为未完成状态。详见[配置说明](docs/CONFIGURATION.zh-CN.md)及[测试证据](docs/testing/NIGHTSCOUT_15_0_8.md)。正式 1.2.0 与安装器不变。
+新增默认关闭的 Nightscout-source、LibreLinkUp、Glooko 与 Webhook Cloudflare 适配；支持旧 BRIDGE 配置自动迁移和显式 legacy 协议。会话、同步游标及发送重试持久化，真实服务验收仍待进行。修复 Profile 固定偏移时区与日期清理边界，补齐可执行/仅报告 CSP 和配置分屏来源；直接执行官方报表模块验证 GMI/RMS、单位及边界。原先被跳过的整套报表测试已纠正为未完成状态。详见[配置说明](docs/CONFIGURATION.zh-CN.md)及[测试证据](docs/testing/NIGHTSCOUT_15_0_8.md)。
 
+
+本测试版现通过 GitHub `main` 及中英文快速安装器提供。进一步减少 AAPS 同步的重复读取和补传的索引写入，保持写入失败后的缓存一致性，修复报表计数、RMS、空小时结果及夏令时日期边界。升级服务同时修复完成结果未确认的问题，兼容更新 Cloudflare 设置后丢失安装标记的旧实例；符合条件的原站升级保留地址、原数据库、设置和原密钥，不会自动升级现有实例。详见 [README](README.zh-CN.md) 与[发布说明](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.0-beta.2)。此前正式版保留在 [v1.2.0](https://github.com/sid-luo/nightscout-for-cloudflare/tree/v1.2.0)。
 
 [English](CHANGELOG.md) | **简体中文**
 
