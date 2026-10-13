@@ -127,7 +127,7 @@ function parsePluginTreatments(value: unknown, now: number): RealtimeDocument[] 
     .map((candidate) => candidate.document);
 }
 
-function parsePluginPropertyContext(json: string, now: number): PluginPropertyContext {
+export function parsePluginPropertyContext(json: string, now: number): PluginPropertyContext {
   const value = JSON.parse(json) as Partial<PluginPropertyContext>;
   return {
     sgvs: Array.isArray(value.sgvs) ? value.sgvs : [],

@@ -69,7 +69,7 @@ describe("official Nightscout UI assets", () => {
     expect(html).toContain('id="nscf-about"');
     expect(html).toContain('Upstream version <span class="version"></span>');
     expect(html).toContain("<strong>Nightscout for Cloudflare</strong>");
-    expect(html).toContain("Version <strong>1.3.1</strong>");
+    expect(html).toContain("Version <strong>1.3.2-beta.1</strong>");
     expect(html).toContain(
       'href="https://github.com/sid-luo/nightscout-for-cloudflare"',
     );
@@ -79,6 +79,10 @@ describe("official Nightscout UI assets", () => {
     const bundle = await SELF.fetch("https://example.test/bundle/js/bundle.app.js");
     expect(bundle.status).toBe(200);
     expect(bundle.headers.get("Content-Type")).toMatch(/charset=utf-8/i);
+    const bundleDigest = await crypto.subtle.digest("SHA-256", await bundle.arrayBuffer());
+    const appCachebuster = Array.from(new Uint8Array(bundleDigest),
+      (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 12);
+    expect(html).toContain(`src="/bundle/js/bundle.app.js?${appCachebuster}"`);
 
     const socketClient = await SELF.fetch("https://example.test/socket.io/socket.io.js");
     expect(socketClient.status).toBe(200);
@@ -135,15 +139,16 @@ describe("official Nightscout UI assets", () => {
       `src="/platform/socket-tenant-adapter.js?${tenantAdapterHash.slice(0, 12)}"`,
     );
     expect(html).toContain(
-      `navigator.serviceWorker.register('/sw.js?v15.0.8-92d0834219aa-${transportCachebuster}'`,
+      `navigator.serviceWorker.register('/sw.js?v15.0.8-92d0834219aa-${transportCachebuster}-${appCachebuster}'`,
     );
 
     const serviceWorker = await SELF.fetch("https://example.test/sw.js");
     expect(serviceWorker.status).toBe(200);
     const serviceWorkerSource = await serviceWorker.text();
     expect(serviceWorkerSource).toContain(
-      `var CACHE = 'v15.0.8-92d0834219aa-${transportCachebuster}'`,
+      `var CACHE = 'v15.0.8-92d0834219aa-${transportCachebuster}-${appCachebuster}'`,
     );
+    expect(serviceWorkerSource).toContain(`'/bundle/js/bundle.app.js?${appCachebuster}'`);
     expect(serviceWorkerSource).not.toContain("'/socket.io/socket.io.js'");
 
     const downstreamArtifact = await SELF.fetch("https://example.test/nscf-upstream.json");
@@ -190,7 +195,12 @@ describe("official Nightscout UI assets", () => {
       'Nightscout.admin_plugins("futureitems").label = "Future-dated records maintenance"',
     );
 
-    const bundleIndex = html.indexOf('<script src="/bundle/js/bundle.app.js"></script>');
+    const bundle = await SELF.fetch("https://example.test/bundle/js/bundle.app.js");
+    expect(bundle.status).toBe(200);
+    const bundleDigest = await crypto.subtle.digest("SHA-256", await bundle.arrayBuffer());
+    const appCachebuster = Array.from(new Uint8Array(bundleDigest),
+      (byte) => byte.toString(16).padStart(2, "0")).join("").slice(0, 12);
+    const bundleIndex = html.indexOf(`<script src="/bundle/js/bundle.app.js?${appCachebuster}"></script>`);
     const labelsIndex = html.indexOf(
       'Nightscout.admin_plugins("cleanstatusdb").label',
     );

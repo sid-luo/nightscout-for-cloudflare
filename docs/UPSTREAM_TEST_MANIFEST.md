@@ -9,7 +9,7 @@ Locked upstream: `nightscout/cgm-remote-monitor` v15.0.8 at `92d0834219aa771b583
 - Routes: 163 (root: 1, v1: 46, v2: 63, v3: 53)
 - Upstream test files: 157
 - Statuses: pass: 43, adapted: 90, excluded-fixed-scope: 1, unresolved: 23
-- Input fingerprint: `b20fb996b5a987dc7aade0c966648e80281dac0dbf303ee594ff614e6c17586f`
+- Input fingerprint: `90367ce5781d23b5432e1d943d1ddcd02c3571d1a23f1223cc313218991693df`
 
 `pass` is intentionally strict: the whole upstream file must run unchanged. `adapted` requires every contract in that file to be represented by named passing Workers-runtime tests. A partial local implementation therefore remains `unresolved`.
 

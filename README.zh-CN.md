@@ -16,6 +16,8 @@
 
 中英文安装器与 GitHub `main` 均提供 **1.3.1**。已有实例需由使用者主动开始升级。
 
+> **测试分支：NSCF 1.3.2-beta.1（`codex/request-budget`）。** 本分支减少 REST 重复数据库读取和内部 Durable Object 调用，修复网页连接失败后立即重试的问题。升级页将其作为可选测试版，稳定版默认仍为 1.3.1。详见[改动及测试范围](docs/testing/REQUEST_BUDGET.md)。
+
 ## 为什么做这个项目
 
 Nightscout 是一个伟大的项目。作为多年的用户，我希望更多人能简单、快速、低成本地部署和使用 Nightscout。

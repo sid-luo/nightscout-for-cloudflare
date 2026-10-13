@@ -15,13 +15,21 @@ import {
   apiSecretDigestMatches,
   authorizationDefaultRoleNames,
   authorizationPermissionGroups,
-  authorizationRoleNames,
   boundedTokenCandidates,
   BUILTIN_AUTHORIZATION_ROLES,
   extractRequestCredentials,
   type PresentedToken,
-  type RequestCredentials,
 } from "./authorization";
+import {
+  authorizeCredential,
+  parseAccessJwtClaims,
+  resolveHttpAuthorization,
+  statusQueryAuthorization,
+  type AuthorizationResolution,
+  type AuthorizedSubject,
+  type HttpAuthorizationRequest,
+  type PresentedCredential,
+} from "./http-authorization";
 import { newTrie } from "shiro-trie";
 import {
   filterDocuments,
@@ -82,6 +90,7 @@ import type { NightscoutGlucoseUnits } from "./plugins/bgnow";
 import {
   calculatePluginProperties,
   loadPluginPropertyContext,
+  parsePluginPropertyContext,
 } from "./plugins/properties";
 import { buildNightscoutPebbleResponse } from "./pebble";
 import {
@@ -122,7 +131,6 @@ const UTF8_CONTENT_TYPES = [
   "image/svg+xml",
 ];
 const MIN_API_SECRET_LENGTH = 12;
-const MAX_AUTH_FAIL_DELAY_MS = 60_000;
 const SEEN_PERMISSIONS = [
   "admin:api:permissions:read",
   "admin:api:roles:create",
@@ -514,35 +522,6 @@ function requestRemoteIp(request: Request): string {
     : "unknown";
 }
 
-async function waitForAuthorizationDelay(
-  store: DurableObjectStub<EntryStore>,
-  ip: string,
-): Promise<void> {
-  const delay = await store.authorizationDelay(ip, Date.now());
-  if (delay <= 0) return;
-  await new Promise<void>((resolve) =>
-    setTimeout(resolve, Math.min(delay, MAX_AUTH_FAIL_DELAY_MS))
-  );
-}
-
-interface AuthorizedSubject {
-  token: string;
-  sub: string;
-  permissionGroups: string[][];
-  iat: number;
-  exp: number;
-}
-
-interface AccessJwtClaims {
-  accessToken: string;
-  iat: number;
-  exp: number;
-}
-
-interface PresentedCredential extends AccessJwtClaims {
-  token: string | null;
-}
-
 const API3_COLLECTIONS = [
   "devicestatus",
   "entries",
@@ -575,145 +554,19 @@ function parseDocuments(value: string): JsonDocument[] {
   return JSON.parse(value) as JsonDocument[];
 }
 
-function parseDocument(value: string): JsonDocument {
-  return JSON.parse(value) as JsonDocument;
-}
-
-function parseAccessJwtClaims(value: string): AccessJwtClaims {
-  const parsed: unknown = JSON.parse(value);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>).accessToken !== "string" ||
-    !Number.isInteger((parsed as Record<string, unknown>).iat) ||
-    !Number.isInteger((parsed as Record<string, unknown>).exp)
-  ) {
-    throw new Error("Durable Object returned invalid JWT claims");
-  }
-  return parsed as AccessJwtClaims;
-}
-
-function parseAuthorizedSubject(value: string): AuthorizedSubject {
-  const parsed: unknown = JSON.parse(value);
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    typeof (parsed as Record<string, unknown>).token !== "string" ||
-    typeof (parsed as Record<string, unknown>).accessToken !== "string" ||
-    !Number.isInteger((parsed as Record<string, unknown>).iat) ||
-    !Number.isInteger((parsed as Record<string, unknown>).exp)
-  ) {
-    throw new Error("Durable Object returned an invalid issued JWT");
-  }
-  const issued = parsed as AccessJwtClaims & { token: string };
-  return {
-    token: issued.token,
-    sub: "",
-    permissionGroups: [],
-    iat: issued.iat,
-    exp: issued.exp,
-  };
-}
-
-async function authorizeCredential(
+async function requestAuthorization(
   store: DurableObjectStub<EntryStore>,
-  accessTokens: PresentedToken,
-  configuredDefaultRoles: string | undefined,
-  credential: PresentedCredential | null = null,
-  refreshJwt = false,
-): Promise<AuthorizedSubject | null> {
-  const candidates = boundedTokenCandidates(accessTokens);
-  if (candidates === null) return null;
-  const subjectJson = await store.resolveAuthorizationSubject(JSON.stringify(candidates));
-  if (subjectJson === null) return null;
-  const subject = parseDocument(subjectJson);
-  if (typeof subject.name !== "string" || typeof subject.accessToken !== "string") return null;
-  const storedRoles = parseDocuments(await store.listDocuments("roles"));
-  const names = authorizationRoleNames(subject.roles, configuredDefaultRoles);
-
-  let authorization: AuthorizedSubject;
-  if (credential !== null && credential.token !== null && !refreshJwt) {
-    authorization = {
-      token: credential.token,
-      sub: subject.name,
-      permissionGroups: [],
-      iat: credential.iat,
-      exp: credential.exp,
-    };
-  } else {
-    authorization = parseAuthorizedSubject(
-      await store.issueAccessJwt(subject.accessToken),
-    );
-    authorization.sub = subject.name;
-  }
-  authorization.permissionGroups = authorizationPermissionGroups(names, storedRoles);
-  return authorization;
-}
-
-interface AuthorizationResolution {
-  admin: boolean;
-  authorized: AuthorizedSubject | null;
-  defaults: boolean;
-}
-
-async function resolveTokenCredential(
-  store: DurableObjectStub<EntryStore>,
-  credentials: RequestCredentials,
-  configuredDefaultRoles: string | undefined,
-): Promise<{ authorized: AuthorizedSubject | null; attempted: boolean }> {
-  if (credentials.token === null || credentials.tokenSource === null) {
-    return { authorized: null, attempted: false };
-  }
-  const candidates = boundedTokenCandidates(credentials.token);
-  if (candidates === null) {
-    return {
-      authorized: null,
-      attempted: credentials.tokenSource === "bearer",
-    };
-  }
-
-  if (credentials.tokenSource === "bearer") {
-    const bearer = candidates.length === 1 ? candidates[0]! : null;
-    if (bearer === null) return { authorized: null, attempted: true };
-    const claimsJson = await store.verifyAccessJwt(bearer);
-    if (claimsJson === null) return { authorized: null, attempted: true };
-    const claims = parseAccessJwtClaims(claimsJson);
-    return {
-      authorized: await authorizeCredential(
-        store,
-        claims.accessToken,
-        configuredDefaultRoles,
-        { ...claims, token: bearer },
-      ),
-      attempted: true,
-    };
-  }
-
-  if (candidates.length === 1) {
-    const candidate = candidates[0]!;
-    const claimsJson = await store.verifyAccessJwt(candidate);
-    if (claimsJson !== null) {
-      const claims = parseAccessJwtClaims(claimsJson);
-      const authorized = await authorizeCredential(
-        store,
-        claims.accessToken,
-        configuredDefaultRoles,
-        null,
-        true,
-      );
-      return { authorized, attempted: authorized !== null };
+  input: HttpAuthorizationRequest,
+): Promise<AuthorizationResolution> {
+  if (typeof store.resolveHttpAuthorizationJson === "function") {
+    try {
+      return JSON.parse(await store.resolveHttpAuthorizationJson(JSON.stringify(input))) as AuthorizationResolution;
+    } catch (error) {
+      if (!isMissingDurableObjectRpcMethod(error, "resolveHttpAuthorizationJson")) throw error;
     }
   }
-  const authorized = await authorizeCredential(
-    store,
-    candidates,
-    configuredDefaultRoles,
-    null,
-    true,
-  );
-  // Locked extractJWTfromRequest converts only a valid query/body access token
-  // into a JWT. An invalid opaque token therefore falls back to defaults.
-  return { authorized, attempted: authorized !== null };
+  // A previous DO isolate may remain live during a rolling deployment.
+  return resolveHttpAuthorization(store, input);
 }
 
 async function resolveRequestAuthorization(
@@ -721,70 +574,23 @@ async function resolveRequestAuthorization(
   env: AppEnv,
   url: URL,
   body?: unknown,
+  statusCredential?: PresentedToken | null,
 ): Promise<AuthorizationResolution> {
   const credentials = extractRequestCredentials(request, url, body);
   const configured = configuredApiSecret(env);
-  // Locked v15.0.7 passes query-string secret arrays into
-  // enclave.isApiKey(), whose scalar-only toLowerCase() throws before the
-  // storage layer can perform its documented ordered subject lookup. Treat
-  // arrays as subject candidates but never as an admin API secret: this keeps
-  // valid access-token arrays useful and makes invalid explicit credentials
-  // fail closed instead of falling back to anonymous defaults.
-  const scalarApiSecret = typeof credentials.apiSecret === "string"
-    ? credentials.apiSecret
-    : null;
-
   if (env.ENTRY_STORE === undefined) {
-    if (await apiSecretDigestMatches(scalarApiSecret, configured)) {
+    if (await apiSecretDigestMatches(typeof credentials.apiSecret === "string" ? credentials.apiSecret : null, configured)) {
       return { admin: true, authorized: null, defaults: false };
     }
-    return {
-      admin: false,
-      authorized: null,
-      defaults: credentials.apiSecret === null && credentials.tokenSource !== "bearer",
-    };
+    return { admin: false, authorized: null,
+      defaults: credentials.apiSecret === null && credentials.tokenSource !== "bearer" };
   }
-  const store = env.ENTRY_STORE.getByName(resolveTenant(request, url));
-  const ip = requestRemoteIp(request);
-  await waitForAuthorizationDelay(store, ip);
-  if (await apiSecretDigestMatches(scalarApiSecret, configured)) {
-    await store.authorizationSucceeded(ip);
-    return { admin: true, authorized: null, defaults: false };
-  }
-  const token = await resolveTokenCredential(
-    store,
-    credentials,
-    env.AUTH_DEFAULT_ROLES,
-  );
-  if (token.authorized !== null) {
-    await store.authorizationSucceeded(ip);
-    return { admin: false, authorized: token.authorized, defaults: false };
-  }
-
-  if (credentials.apiSecret !== null) {
-    const secretSubject = await authorizeCredential(
-      store,
-      credentials.apiSecret,
-      env.AUTH_DEFAULT_ROLES,
-      null,
-      true,
-    );
-    if (secretSubject !== null) await store.authorizationSucceeded(ip);
-    else await store.authorizationFailed(ip, Date.now(), configuredAuthFailDelay(env));
-    return {
-      admin: false,
-      authorized: secretSubject,
-      defaults: false,
-    };
-  }
-  if (token.attempted) {
-    await store.authorizationFailed(ip, Date.now(), configuredAuthFailDelay(env));
-  }
-  return {
-    admin: false,
-    authorized: null,
-    defaults: !token.attempted,
-  };
+  return requestAuthorization(env.ENTRY_STORE.getByName(resolveTenant(request, url)), {
+    credentials, ip: requestRemoteIp(request), configuredSecret: configured,
+    failDelayMs: configuredAuthFailDelay(env),
+    ...(env.AUTH_DEFAULT_ROLES === undefined ? {} : { defaultRoles: env.AUTH_DEFAULT_ROLES }),
+    ...(statusCredential === undefined ? {} : { statusCredential }),
+  });
 }
 
 async function permissionGroupsForResolution(
@@ -792,6 +598,7 @@ async function permissionGroupsForResolution(
   store: DurableObjectStub<EntryStore>,
   env: AppEnv,
 ): Promise<string[][]> {
+  if (resolution.permissionGroups !== undefined) return resolution.permissionGroups;
   if (resolution.admin) return [["*"]];
   if (resolution.authorized !== null) return resolution.authorized.permissionGroups;
   if (!resolution.defaults) return [];
@@ -808,8 +615,9 @@ async function requirePermissions(
   url: URL,
   permissions: readonly string[],
   body?: unknown,
+  statusCredential?: PresentedToken | null,
 ): Promise<AuthorizationResolution> {
-  const resolution = await resolveRequestAuthorization(request, env, url, body);
+  const resolution = await resolveRequestAuthorization(request, env, url, body, statusCredential);
   if (resolution.admin) return resolution;
   if (env.ENTRY_STORE === undefined) {
     if (configuredApiSecret(env) === null) {
@@ -852,8 +660,9 @@ async function requirePermission(
   url: URL,
   permission: string,
   body?: unknown,
+  statusCredential?: PresentedToken | null,
 ): Promise<AuthorizationResolution> {
-  return requirePermissions(request, env, url, [permission], body);
+  return requirePermissions(request, env, url, [permission], body, statusCredential);
 }
 
 function formBody(text: string): unknown {
@@ -957,40 +766,19 @@ function selectedStatusQueryCredential(url: URL): PresentedToken | null {
   return selected;
 }
 
-async function statusQueryAuthorization(
-  store: DurableObjectStub<EntryStore>,
-  url: URL,
-  configuredDefaultRoles: string | undefined,
-): Promise<AuthorizedSubject | null> {
-  const presented = selectedStatusQueryCredential(url);
-  if (presented === null || boundedTokenCandidates(presented) === null) return null;
-  // Locked authorization.authorize() asks the enclave to verify only a scalar
-  // JWT. Repeated/[] query values remain an array, and storage.findSubject()
-  // checks those access-token prefixes in their presented order.
-  if (Array.isArray(presented)) {
-    return authorizeCredential(store, presented, configuredDefaultRoles);
-  }
-  const claimsJson = await store.verifyAccessJwt(presented);
-  const accessToken = claimsJson === null
-    ? presented
-    : parseAccessJwtClaims(claimsJson).accessToken;
-  return authorizeCredential(store, accessToken, configuredDefaultRoles);
-}
-
 async function statusForRequest(
   env: AppEnv,
   url: URL,
+  statusAuthorized?: AuthorizedSubject | null,
 ): Promise<Record<string, unknown>> {
   const store = env.ENTRY_STORE.getByName(resolveTenantFromUrl(url));
   const status = JSON.parse(await store.nightscoutHttpStatus(Date.now())) as Record<string, unknown>;
   // Locked status.js does not reuse the authorization middleware result. It
   // independently calls authorization.authorize(query.token || query.secret)
   // and therefore ignores Bearer and api-secret headers for this field.
-  status.authorized = await statusQueryAuthorization(
-    store,
-    url,
-    env.AUTH_DEFAULT_ROLES,
-  );
+  status.authorized = statusAuthorized === undefined
+    ? await statusQueryAuthorization(store, selectedStatusQueryCredential(url), env.AUTH_DEFAULT_ROLES)
+    : statusAuthorized;
   return status;
 }
 
@@ -2023,6 +1811,48 @@ async function renderLegacyEntries(
   return withoutBodyForHead(request, new Response(body, { status: 200, headers }));
 }
 
+async function legacyEntriesResponse(
+  store: DurableObjectStub<EntryStore>,
+  query: Parameters<EntryStore["getEntriesJson"]>[0],
+  ifModifiedSince: string | null,
+): Promise<string> {
+  if (typeof store.getLegacyEntriesResponseJson === "function") {
+    try {
+      return await store.getLegacyEntriesResponseJson(query, ifModifiedSince);
+    } catch (error) {
+      if (!isMissingDurableObjectRpcMethod(error, "getLegacyEntriesResponseJson")) throw error;
+    }
+  }
+  const latest = (await store.getSgvEntries(1))[0];
+  const latestTime = latest === undefined ? undefined : legacyEntryTime(latest);
+  const contextLastModified = latestTime !== undefined && Number.isFinite(latestTime) && latestTime !== 0
+    ? latestTime : undefined;
+  if (contextLastModified !== undefined && ifModifiedSince !== null && contextLastModified <= Date.parse(ifModifiedSince)) {
+    return JSON.stringify({ ok: true, notModified: true, contextLastModified });
+  }
+  return JSON.stringify({ ...JSON.parse(await store.getEntriesJson(query)), contextLastModified });
+}
+
+async function pluginPropertyResponse(store: DurableObjectStub<EntryStore>, now: number) {
+  if (typeof store.getPluginPropertyResponseJson === "function") {
+    try {
+      const result = JSON.parse(await store.getPluginPropertyResponseJson(now)) as {
+        context: unknown;
+        status: { settings?: { units?: unknown; enable?: unknown }; extendedSettings?: Record<string, unknown>; runtimeState?: unknown };
+      };
+      return [parsePluginPropertyContext(JSON.stringify(result.context), now), result.status] as const;
+    } catch (error) {
+      if (!isMissingDurableObjectRpcMethod(error, "getPluginPropertyResponseJson")) throw error;
+    }
+  }
+  return Promise.all([
+    loadPluginPropertyContext(store, now),
+    store.nightscoutHttpStatus(now).then((value) => JSON.parse(value) as {
+      settings?: { units?: unknown; enable?: unknown }; extendedSettings?: Record<string, unknown>; runtimeState?: unknown;
+    }),
+  ]);
+}
+
 async function handleEntriesApi(
   request: Request,
   env: AppEnv,
@@ -2291,29 +2121,14 @@ async function handleEntriesApi(
     }
     const query = parseHistoryQuery(url);
     if (spec !== undefined) query.type = spec;
-    let contextLastModified: number | undefined;
-    if (spec === undefined) {
-      // Locked exact `/entries` runs ifModifiedSinceCTX against the latest
-      // runtime SGV before executing its Mongo query. The DO's bounded SGV
-      // bucket is the Cloudflare equivalent of ctx.ddata.sgvs.
-      const latestSgv = (await store.getSgvEntries(1))[0];
-      if (latestSgv !== undefined) {
-        const latestTime = legacyEntryTime(latestSgv);
-        if (Number.isFinite(latestTime) && latestTime !== 0) {
-          contextLastModified = latestTime;
-          const ifModifiedSince = request.headers.get("If-Modified-Since");
-          if (
-            ifModifiedSince !== null
-            && latestTime <= Date.parse(ifModifiedSince)
-          ) {
-            return legacyEntryNotModified(latestTime);
-          }
-        }
-      }
+    const decision = JSON.parse(spec === undefined
+      ? await legacyEntriesResponse(store, query, request.headers.get("If-Modified-Since"))
+      : await store.getEntriesJson(query)) as
+        | { ok: true; result: PublicEntry[]; notModified?: boolean; contextLastModified?: number }
+        | { ok: false; status?: number; message: string };
+    if (decision.ok && decision.notModified && decision.contextLastModified !== undefined) {
+      return legacyEntryNotModified(decision.contextLastModified);
     }
-    const decision = JSON.parse(await store.getEntriesJson(query)) as
-      | { ok: true; result: PublicEntry[] }
-      | { ok: false; status?: number; message: string };
     if (!decision.ok) {
       if (decision.status === 400 || decision.status === 413) {
         throw new ApiError(
@@ -2329,7 +2144,7 @@ async function handleEntriesApi(
       decision.result,
       splitPath.extension,
       spec ?? query.type ?? undefined,
-      contextLastModified,
+      decision.contextLastModified,
     );
   }
 
@@ -2483,6 +2298,27 @@ function legacyCount(url: URL, defaultCount: number): number {
   return count;
 }
 
+function legacyDeviceStatusCandidateLimit(url: URL): number {
+  const count = legacyCount(url, 10);
+  // Filtering/sorting can select rows beyond the requested count. Preserve
+  // the original candidate window and JS semantics for every such query.
+  for (const key of url.searchParams.keys()) {
+    if (key.startsWith("find[") || key.startsWith("sort[")) return 5000;
+  }
+  return Math.min(count, 5000);
+}
+
+async function legacyDeviceStatusResponse(store: DurableObjectStub<EntryStore>, limit: number): Promise<string> {
+  if (typeof store.getLegacyDeviceStatusJson === "function") {
+    try {
+      return await store.getLegacyDeviceStatusJson(limit);
+    } catch (error) {
+      if (!isMissingDurableObjectRpcMethod(error, "getLegacyDeviceStatusJson")) throw error;
+    }
+  }
+  return store.listDocuments("devicestatus");
+}
+
 async function handleCollectionApi(
   request: Request,
   env: AppEnv,
@@ -2513,7 +2349,9 @@ async function handleCollectionApi(
           JSON.stringify(parseTreatmentQuery(url, defaultDocumentCount(collection, url), true)),
         ),
       )))
-      : parseDocuments(await store.listDocuments(collection));
+      : collection === "devicestatus"
+        ? parseDocuments(await legacyDeviceStatusResponse(store, legacyDeviceStatusCandidateLimit(url)))
+        : parseDocuments(await store.listDocuments(collection));
     if (collection === "profile" && segment === "current") return json(all[0] ?? null);
     // The locked Food storage helpers do not consume request query options.
     // Preserve their all/regular/quickpicks behavior instead of routing Food
@@ -2954,31 +2792,16 @@ async function authenticateApi3(
     return { ok: false, response: api3Error(401, "Missing or bad access token or JWT") };
   }
   const store = env.ENTRY_STORE.getByName(resolveTenant(request, url));
-  const ip = requestRemoteIp(request);
-  await waitForAuthorizationDelay(store, ip);
-  if (boundedTokenCandidates(bearer) === null) {
-    await store.authorizationFailed(ip, Date.now(), configuredAuthFailDelay(env));
+  const resolution = await requestAuthorization(store, {
+    credentials: { apiSecret: null, token: bearer, tokenSource: "bearer" },
+    ip: requestRemoteIp(request), configuredSecret: null, api3: true,
+    failDelayMs: configuredAuthFailDelay(env),
+    ...(env.AUTH_DEFAULT_ROLES === undefined ? {} : { defaultRoles: env.AUTH_DEFAULT_ROLES }),
+  });
+  if (resolution.authorized === null) {
     return { ok: false, response: api3Error(401, "Bad access token or JWT") };
   }
-
-  const claimsJson = await store.verifyAccessJwt(bearer);
-  if (claimsJson === null) {
-    await store.authorizationFailed(ip, Date.now(), configuredAuthFailDelay(env));
-    return { ok: false, response: api3Error(401, "Bad access token or JWT") };
-  }
-  const claims = parseAccessJwtClaims(claimsJson);
-  const authorized = await authorizeCredential(
-    store,
-    claims.accessToken,
-    env.AUTH_DEFAULT_ROLES,
-    { ...claims, token: bearer },
-  );
-  if (authorized === null) {
-    await store.authorizationFailed(ip, Date.now(), configuredAuthFailDelay(env));
-    return { ok: false, response: api3Error(401, "Bad access token or JWT") };
-  }
-  await store.authorizationSucceeded(ip);
-  return { ok: true, authorized, store };
+  return { ok: true, authorized: resolution.authorized, store };
 }
 
 async function handleApi(request: Request, env: AppEnv, url: URL): Promise<Response> {
@@ -3020,25 +2843,16 @@ async function handleApi(request: Request, env: AppEnv, url: URL): Promise<Respo
     && statusMatch !== null
     && statusExtensionHasLockedCase
   ) {
-    await requirePermission(
-      request,
-      env,
-      url,
-      "api:status:read",
-    );
     const extension = statusExtension;
-    if (extension === "csv" || extension === "tsv") {
-      return statusNotAcceptable(request);
-    }
-    const format: StatusFormat | null = extension === undefined
-      ? negotiatedStatusFormat(request)
-      : extension === "txt"
-        ? "text"
-        : extension as StatusFormat;
-    if (format === null) {
-      return statusNotAcceptable(request);
-    }
-    const status = await statusForRequest(env, url);
+    const format: StatusFormat | null = extension === "csv" || extension === "tsv" ? null
+      : extension === undefined ? negotiatedStatusFormat(request)
+        : extension === "txt" ? "text" : extension as StatusFormat;
+    const resolution = await requirePermission(
+      request, env, url, "api:status:read", undefined,
+      format === null ? undefined : selectedStatusQueryCredential(url),
+    );
+    if (format === null) return statusNotAcceptable(request);
+    const status = await statusForRequest(env, url, resolution.statusAuthorized);
     return withoutBodyForHead(
       request,
       renderStatus(request, status, format, extension !== undefined),
@@ -3278,14 +3092,7 @@ async function handleApi(request: Request, env: AppEnv, url: URL): Promise<Respo
     // unrelated food or long-range Treatment history.
     const store = env.ENTRY_STORE.getByName(tenant);
     const now = Date.now();
-    const [context, status] = await Promise.all([
-      loadPluginPropertyContext(store, now),
-      store.nightscoutHttpStatus(now).then((value) => JSON.parse(value) as {
-        settings?: { units?: unknown; enable?: unknown };
-        extendedSettings?: Record<string, unknown>;
-        runtimeState?: unknown;
-      }),
-    ]);
+    const [context, status] = await pluginPropertyResponse(store, now);
     const units: NightscoutGlucoseUnits = status.settings?.units === "mmol"
       ? "mmol"
       : "mg/dl";

@@ -2,6 +2,8 @@ import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storag
 import { resolveWebhook, type WebhookEnvironment } from "./webhook-delivery";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
 import { AuxiliaryQueryCache } from "./realtime/auxiliary-query-cache";
+import { LegacyReadCache } from "./legacy-read-cache";
+import { resolveHttpAuthorization, type HttpAuthorizationRequest } from "./http-authorization";
 import { RecentTreatmentQueryCache } from "./realtime/recent-treatment-query-cache";
 import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
 import { DurableObject } from "cloudflare:workers";
@@ -801,6 +803,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private realtimeDeviceStatusQueries = new DeviceStatusQueryCache<DbDocument>();
   private deviceStatusCacheMutation = false;
   private readonly recentTreatmentQueries = new RecentTreatmentQueryCache<DbDocument>();
+  private readonly legacyDeviceStatusQueries = new LegacyReadCache();
+  private readonly legacyTreatmentQueries = new LegacyReadCache();
   private activeProfileSwitchCache: { at: number; expiresAt: number; nextAt: number; value: string | null } | undefined;
   private readonly realtimeAuxiliaryQueries = {
     treatments: new AuxiliaryQueryCache<DbDocument>(),
@@ -861,6 +865,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private completeStorageInitialization(): void {
+    this.legacyDeviceStatusQueries.clear();
+    this.legacyTreatmentQueries.clear();
     this.realtimeEntryQueries.clear();
     this.realtimeDeviceStatusQueries.clear();
     for (const cache of Object.values(this.realtimeAuxiliaryQueries)) cache.clear();
@@ -1959,7 +1965,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private invalidateAuxiliaryQueries(collection: string): void {
+    if (collection === "devicestatus") this.legacyDeviceStatusQueries.clear();
     if (collection === "treatments") {
+      this.legacyTreatmentQueries.clear();
       this.recentTreatmentQueries.clear();
       this.activeProfileSwitchCache = undefined;
     }
@@ -3723,6 +3731,10 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     return Math.min(delay, AUTHORIZATION_FAILURE_MAX_DELAY_MS);
   }
 
+  async resolveHttpAuthorizationJson(inputJson: string): Promise<string> {
+    return JSON.stringify(await resolveHttpAuthorization(this, JSON.parse(inputJson) as HttpAuthorizationRequest));
+  }
+
   async authorizationFailed(ip: string, now: number, delayMs: number): Promise<void> {
     const normalizedIp = this.authorizationFailureIp(ip);
     if (
@@ -4590,6 +4602,20 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     }
   }
 
+  /** Exact /entries uses the live SGV marker even when its query selects other rows. */
+  async getLegacyEntriesResponseJson(query: HistoryQuery, ifModifiedSince: string | null): Promise<string> {
+    const latest = (await this.getSgvEntries(1))[0];
+    const mills = (latest as (PublicEntry & { mills?: unknown }) | undefined)?.mills;
+    const latestTime = typeof mills === "number" && mills !== 0 ? mills : latest?.date;
+    const contextLastModified = latestTime !== undefined && Number.isFinite(latestTime) && latestTime !== 0
+      ? latestTime : undefined;
+    if (contextLastModified !== undefined && ifModifiedSince !== null && contextLastModified <= Date.parse(ifModifiedSince)) {
+      return JSON.stringify({ ok: true, notModified: true, contextLastModified });
+    }
+    const decision = JSON.parse(await this.getEntriesJson(query)) as Record<string, unknown>;
+    return JSON.stringify({ ...decision, contextLastModified });
+  }
+
   async countLegacyDocumentsJson(
     collection: Api3CollectionName,
     query: HistoryQuery,
@@ -4705,6 +4731,13 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     return JSON.stringify(this.pluginPropertyContext(Math.trunc(at)));
   }
 
+  async getPluginPropertyResponseJson(at: number): Promise<string> {
+    return JSON.stringify({
+      context: JSON.parse(await this.getPluginPropertyContextJson(at)),
+      status: JSON.parse(this.nightscoutHttpStatus(at)),
+    });
+  }
+
   async getEntryById(id: string): Promise<PublicEntry[]> {
     const entry = this.documentRepository().findLegacyEntryById(id);
     return entry === null ? [] : [toPublicEntry(entry)];
@@ -4740,6 +4773,20 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     );
     await this.publishRootDataUpdate();
     return deleted;
+  }
+
+  async getLegacyDeviceStatusJson(limit: number): Promise<string> {
+    const boundedLimit = Math.max(1, Math.min(5000, Math.trunc(limit)));
+    return this.legacyDeviceStatusQueries.read(String(boundedLimit), () => {
+      // Match listDocuments exactly, including soft-deleted records and ties.
+      // Generic legacy filters still run against the original 5,000-row prefix.
+      const documents = this.ctx.storage.sql.exec<DbDocument>(
+        `SELECT id, body, sort_time FROM documents WHERE collection = ?
+         ORDER BY sort_time DESC, updated_at DESC LIMIT ?`,
+        "devicestatus", boundedLimit,
+      ).toArray().map(toDocument);
+      return JSON.stringify(documents);
+    });
   }
 
   async listDocuments(collection: DocumentCollection, limit = 5000): Promise<string> {
@@ -5400,7 +5447,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   ): Promise<string> {
     const query = JSON.parse(queryJson) as DocumentQuery;
     query.legacyUuidHandling = uuidHandling;
-    return JSON.stringify(this.documentRepository().queryLegacyTreatments(query));
+    return this.legacyTreatmentQueries.read(JSON.stringify(query), () =>
+      JSON.stringify(this.documentRepository().queryLegacyTreatments(query))
+    );
   }
 
   async upsertTreatment(documentJson: string): Promise<string> {

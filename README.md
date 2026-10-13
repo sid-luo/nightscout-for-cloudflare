@@ -16,6 +16,8 @@ This is an independent, unofficial open-source port. Actual costs depend on your
 
 Both installers and GitHub `main` provide **1.3.1**. Existing instances update only when their owner starts an upgrade.
 
+> **Testing branch: NSCF 1.3.2-beta.1 (`codex/request-budget`).** This branch reduces repeated REST database reads and internal Durable Object calls, and fixes immediate browser retries after a connection failure. The upgrade page offers it as an optional testing build; stable installations still default to 1.3.1. See [changes and test scope](docs/testing/REQUEST_BUDGET.md).
+
 ## Why this project exists
 
 Nightscout is a great project. As a long-time user, I hope more people can deploy and use Nightscout easily, quickly and at low cost.

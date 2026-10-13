@@ -13,8 +13,12 @@ NSCF is an independent, unofficial Cloudflare port of
 `nightscout/cgm-remote-monitor`. The locked baseline is official Nightscout
 `v15.0.8` at commit
 `92d0834219aa771b5837dbcbf1baeb839a200cf6`; provenance and the release archive
-SHA-256 are recorded in `upstream/manifest.json`. The 764 files under
-`vendor/nightscout` are an unmodified release snapshot.
+SHA-256 are recorded in `upstream/manifest.json`. The files under
+`vendor/nightscout` start from that release snapshot. Explicit local fixes are
+recorded in [the patch queue](../upstream/patches/README.md); the browser
+initialization retry fix preserves the five-second delay and prevents stale
+initialization responses from scheduling additional retries. Upstream test
+files remain unchanged.
 
 NSCF is **not a complete Nightscout port yet**. A route returning HTTP 200, an
 official page opening, or the official browser bundle loading is not sufficient

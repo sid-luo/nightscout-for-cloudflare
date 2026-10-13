@@ -2476,6 +2476,14 @@ export class SqliteDocumentRepository {
     // eligibility. Other collections retain the shared bound predicate.
     const clauses = collection === ENTRIES ? ["collection = 'entries'"] : ["collection = ?"];
     const bindings: SqlStorageValue[] = collection === ENTRIES ? [] : [collection];
+    if (collection === TREATMENTS && policy === "legacy" && query.sort === undefined) {
+      // Canonical bodies are serialized JSON. Spell out the existing partial
+      // index predicate so latest-N REST reads can walk created_at in order
+      // instead of scanning and sorting the entire treatment collection.
+      // Keep the generic scalar/array filters and the legacy id-ascending tie
+      // break: reducing the candidate set before those filters would lose data.
+      clauses.push("collection IN ('treatments', 'devicestatus')", "json_valid(body)");
+    }
     if (policy === "api3" && query.includeDeleted !== true) clauses.push("is_valid != 0");
     for (const filter of query.filters ?? []) {
       appendFilter(

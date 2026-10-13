@@ -1,0 +1,73 @@
+diff --git a/vendor/nightscout/lib/client/index.js b/vendor/nightscout/lib/client/index.js
+index 6ea9cd3..950eb39 100644
+--- a/vendor/nightscout/lib/client/index.js
++++ b/vendor/nightscout/lib/client/index.js
+@@ -20,6 +20,15 @@ var moment = window.moment;
+ var timezones = moment.tz.names();
+ 
+ var client = {};
++var initRetryTimer = null;
++var initAttempt = 0;
++
++function clearInitRetry () {
++  if (initRetryTimer !== null) {
++    window.clearTimeout(initRetryTimer);
++    initRetryTimer = null;
++  }
++}
+ 
+ var hashauth = require('./hashauth');
+ client.hashauth = hashauth.init(client, $);
+@@ -46,6 +55,16 @@ client.crashed = function crashed () {
+ }
+ 
+ client.init = function init (callback) {
++  clearInitRetry();
++  var attempt = ++initAttempt;
++
++  function retryInit () {
++    if (attempt !== initAttempt || initRetryTimer !== null) return;
++    initRetryTimer = window.setTimeout(function retryAfterDelay () {
++      initRetryTimer = null;
++      if (attempt === initAttempt) client.init(callback);
++    }, 5000);
++  }
+ 
+   client.browserUtils = require('./browser-utils')($);
+ 
+@@ -65,21 +84,24 @@ client.init = function init (callback) {
+     , url: src
+     , headers: client.headers()
+   }).done(function success (serverSettings) {
++    if (attempt !== initAttempt) return;
+     if (serverSettings.runtimeState !== 'loaded') {
+       console.log('Server is still loading data');
+       $('#loadingMessageText').html('Nightscout is still starting and should be available within about 15 seconds.');
+-      window.setTimeout(window.Nightscout.client.init, 5000);
++      retryInit();
+       return;
+     }
++    clearInitRetry();
+     client.settingsFailed = false;
+     client.loadLanguage(serverSettings, callback);
+   }).fail(function fail (jqXHR) {
++    if (attempt !== initAttempt) return;
+ 
+     // check if we couldn't reach the server at all, show offline message
+     if (!jqXHR.readyState) {
+       console.log('Application appears to be OFFLINE');
+       $('#loadingMessageText').html('Connecting to Nightscout server failed, retrying every 5 seconds');
+-      window.setTimeout(window.Nightscout.client.init(), 5000);
++      retryInit();
+       return;
+     }
+ 
+@@ -106,7 +128,7 @@ client.init = function init (callback) {
+       // auth failed, hide loader and request for key
+       $('#centerMessagePanel').hide();
+       client.hashauth.requestAuthentication(function afterRequest () {
+-        window.setTimeout(client.init(callback), 5000);
++        retryInit();
+       });
+     }
+   });

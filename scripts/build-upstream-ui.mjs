@@ -20,6 +20,9 @@ const upstreamBundleRoot = path.join(
 const manifest = JSON.parse(
   await readFile(path.join(projectRoot, "upstream", "manifest.json"), "utf8"),
 );
+const appBundle = await readFile(path.join(upstreamBundleRoot, "js", "bundle.app.js"));
+const appCachebuster = createHash("sha256").update(appBundle).digest("hex").slice(0, 12);
+const appBundleUrl = `/bundle/js/bundle.app.js?${appCachebuster}`;
 const projectPackage = JSON.parse(
   await readFile(path.join(projectRoot, "package.json"), "utf8"),
 );
@@ -60,7 +63,7 @@ const transportCachebuster = createHash("sha256")
   .update(reportCandles)
   .digest("hex")
   .slice(0, 12);
-const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${transportCachebuster}`;
+const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${transportCachebuster}-${appCachebuster}`;
 const locals = { bundle: "/bundle", cachebuster };
 
 function displayProjectVersion(version) {
@@ -89,6 +92,7 @@ const transportScripts = [
 
 function applyPlatformAssetVersions(html) {
   return html
+    .replaceAll('src="/bundle/js/bundle.app.js"', `src="${appBundleUrl}"`)
     .replaceAll(
       '<script src="socket.io/socket.io.js"></script>',
       transportScripts,
@@ -239,6 +243,7 @@ const serviceWorkerPath = path.join(vendorRoot, "views", "service-worker.js");
 const serviceWorkerSource = await readFile(serviceWorkerPath, "utf8");
 const serviceWorker = ejs
   .render(serviceWorkerSource, { locals }, { filename: serviceWorkerPath })
+  .replace("'/bundle/js/bundle.app.js'", `'${appBundleUrl}'`)
   .replace("    '/socket.io/socket.io.js',\n", "");
 await writeFile(path.join(publicRoot, "sw.js"), serviceWorker);
 

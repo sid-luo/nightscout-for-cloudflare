@@ -5,6 +5,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const retryTests = spawnSync(process.execPath, ["--test", "scripts/client-init-retry.test.mjs"], {
+  cwd: repositoryRoot,
+  stdio: "inherit",
+});
+if (retryTests.error) throw retryTests.error;
+if (retryTests.status !== 0) process.exit(retryTests.status ?? 1);
+
 const upstreamRoot = join(repositoryRoot, "vendor", "nightscout");
 const upstreamBundle = join(
   upstreamRoot,
@@ -22,7 +29,7 @@ const deployedBytes = readFileSync(deployedAsset);
 if (!upstreamBytes.equals(deployedBytes)) {
   const digest = (value) => createHash("sha256").update(value).digest("hex");
   throw new Error(
-    `Official client bundle mismatch: upstream=${digest(upstreamBytes)} public=${digest(deployedBytes)}`,
+    `Rebuilt vendor client bundle mismatch: upstream=${digest(upstreamBytes)} public=${digest(deployedBytes)}`,
   );
 }
 
@@ -86,5 +93,5 @@ if (goldens.error) throw goldens.error;
 if (goldens.status !== 0) process.exit(goldens.status ?? 1);
 
 console.log(
-  "Locked upstream client and client-core suites passed unchanged against the byte-identical NSCF client bundle (counts above).",
+  "Upstream client and client-core test suites passed unchanged; the NSCF bundle is byte-identical to the rebuilt vendor bundle, including the explicit local patch queue (counts above).",
 );
