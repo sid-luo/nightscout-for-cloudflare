@@ -105,7 +105,7 @@ You can also use the GitHub deployment button to deploy **1.3.1** from `main`, f
 
 For a supported instance deployed through the web installer, including 1.2.0, 1.3.0-beta.2 and 1.3.1-beta.1, open the [English upgrade page](https://nscf.sidluo.com/upgrade/), authorize the original account, select the instance and confirm the upgrade to **1.3.1**. The upgrade preserves your address, data, settings and original API key, so AAPS keeps its existing configuration. Other instances are not upgraded automatically.
 
-The upgrade page also supports an optional testing channel when a newer test build is available; it requires a separate confirmation. The current recommended version is **1.3.1**.
+To test this branch, select **1.3.2-beta.1 · codex/request-budget** on the upgrade page and confirm the testing upgrade. The default stable version remains **1.3.1**.
 
 Instances deployed through the GitHub button or not recognized by the installer are not supported by this path. If the original `API_SECRET` is a Cloudflare Secret, the page asks you to save the same original value as a plain-text variable before checking again.
 
@@ -120,7 +120,7 @@ Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
 - Nightscout upstream version: **15.0.8**
-- Nightscout for Cloudflare version: **1.3.1**
+- Nightscout for Cloudflare version on this branch: **1.3.2-beta.1** (stable: **1.3.1**)
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible

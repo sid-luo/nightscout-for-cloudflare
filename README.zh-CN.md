@@ -105,7 +105,7 @@ legacy v1 设备状态上传改为增量更新缓存，避免每次上传后失�
 
 通过快速安装器部署、符合识别条件的实例，包括 1.2.0、1.3.0-beta.2 和 1.3.1-beta.1，可在[升级页面](https://ns.sidluo.com/sj/)授权原账号、选择实例并确认升级至 **1.3.1**。升级保留原网址、数据、设置和原密钥，AAPS 继续使用原配置；不会自动升级其他实例。
 
-升级页也支持可选的测试通道；有更新的测试包时可主动选择，并需单独确认。当前推荐版本为 **1.3.1**。
+测试本分支时，在升级页选择 **1.3.2-beta.1 · codex/request-budget**，再确认测试版升级。默认稳定版本仍为 **1.3.1**。
 
 GitHub 一键部署或无法识别的实例不适用此通道。若原 `API_SECRET` 使用 Cloudflare Secret，页面会提示先将同一个原值保存为普通文本，再重新检查升级。
 
@@ -119,7 +119,7 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 移植版本。Nightscout 上游版本和移植版本使用各自独立的版本号：
 
 - Nightscout 上游版本：**15.0.8**
-- Nightscout for Cloudflare 版本：**1.3.1**
+- 本分支 Nightscout for Cloudflare 版本：**1.3.2-beta.1**（稳定版：**1.3.1**）
 
 原版 Admin Tools 的对应功能仍然保留，但本项目使用 SQLite Durable Objects
 存储数据，而不是 MongoDB。因此，页面中的部分名称会调整为与实际存储方式无关
