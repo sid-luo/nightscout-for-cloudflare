@@ -2,7 +2,7 @@
 
 ## 1.3.2-beta.1 — Request and database-read optimization (2026-10-13, testing branch)
 
-The `codex/request-budget` branch limits count-only device-status reads in SQL, caches exact unchanged device-status and treatment responses, and uses the existing treatment index. REST authentication resolves within one Durable Object call; entry freshness and data, and plugin context and status, each share a single data call. Authorization failure delays and current role checks remain in place. Browser initialization now waits five seconds before retrying a failed connection, with one pending retry and obsolete callbacks ignored. Updated client code receives a new asset URL.
+The `1.3.2-beta.1` branch limits count-only device-status reads in SQL, caches exact unchanged device-status and treatment responses, and uses the existing treatment index. REST authentication resolves within one Durable Object call; entry freshness and data, and plugin context and status, each share a single data call. Authorization failure delays and current role checks remain in place. Browser initialization now waits five seconds before retrying a failed connection, with one pending retry and obsolete callbacks ignored. Updated client code receives a new asset URL.
 
 This is an optional testing upgrade. The stable default remains **1.3.1**. No new database migration is introduced, and uploads, history, filtering and output semantics are retained. See [measurements, regression coverage and limits](docs/testing/REQUEST_BUDGET.md). These fixes address reproduced amplification in NSCF; the original report's exact exhausted Cloudflare quota is still unconfirmed.
 

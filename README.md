@@ -16,7 +16,7 @@ This is an independent, unofficial open-source port. Actual costs depend on your
 
 Both installers and GitHub `main` provide **1.3.1**. Existing instances update only when their owner starts an upgrade.
 
-> **Testing branch: NSCF 1.3.2-beta.1 (`codex/request-budget`).** This branch reduces repeated REST database reads and internal Durable Object calls, and fixes immediate browser retries after a connection failure. The upgrade page offers it as an optional testing build; stable installations still default to 1.3.1. See [changes and test scope](docs/testing/REQUEST_BUDGET.md).
+> **Testing branch: NSCF 1.3.2-beta.1 (`1.3.2-beta.1`).** This branch reduces repeated REST database reads and internal Durable Object calls, and fixes immediate browser retries after a connection failure. The upgrade page offers it as an optional testing build; stable installations still default to 1.3.1. See [changes and test scope](docs/testing/REQUEST_BUDGET.md).
 
 ## Why this project exists
 
@@ -105,7 +105,7 @@ You can also use the GitHub deployment button to deploy **1.3.1** from `main`, f
 
 For a supported instance deployed through the web installer, including 1.2.0, 1.3.0-beta.2 and 1.3.1-beta.1, open the [English upgrade page](https://nscf.sidluo.com/upgrade/), authorize the original account, select the instance and confirm the upgrade to **1.3.1**. The upgrade preserves your address, data, settings and original API key, so AAPS keeps its existing configuration. Other instances are not upgraded automatically.
 
-To test this branch, select **1.3.2-beta.1 · codex/request-budget** on the upgrade page and confirm the testing upgrade. The default stable version remains **1.3.1**.
+To test this branch, select **Testing version · 1.3.2-beta.1** on the upgrade page and confirm the testing upgrade. The default stable version remains **1.3.1**.
 
 Instances deployed through the GitHub button or not recognized by the installer are not supported by this path. If the original `API_SECRET` is a Cloudflare Secret, the page asks you to save the same original value as a plain-text variable before checking again.
 

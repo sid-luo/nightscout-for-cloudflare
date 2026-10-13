@@ -1,6 +1,6 @@
 # 1.3.2-beta.1 request and read optimization
 
-Testing branch: `codex/request-budget`. Stable remains `1.3.1`.
+Testing branch: `1.3.2-beta.1`. Stable remains `1.3.1`.
 
 ## What changes
 
