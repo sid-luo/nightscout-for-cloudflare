@@ -8,15 +8,13 @@
 
 这是独立、非官方的开源移植项目。实际费用取决于所选 Cloudflare 套餐和用量，优化不会提高平台额度。
 
-> **正式版：NSCF 1.3.1 · 基于 Nightscout 15.0.8。**
+> **正式版：NSCF 1.3.2 · 基于 Nightscout 15.0.8。**
 >
-> 包含 Nightscout 15.0.8 适配、AAPS 同步优化，以及在 1.3.1-beta.1 验证的 Trio/v1 读取优化。详见[发布说明](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.1)和 [Trio SQL 对照](docs/testing/TRIO_READ_OPTIMIZATION.md)。
+> 减少 REST 重复数据库读取和内部 Durable Object 调用，修复网页连接失败后立即重试的问题，并保留此前 AAPS 和 Trio 同步优化。详见[发布说明](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.2)和[测量及测试范围](docs/testing/REQUEST_BUDGET.md)。
 
 [快速安装器](https://ns.sidluo.com/) · [原站升级](https://ns.sidluo.com/sj/) · [GitHub 一键部署](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
 
-中英文安装器与 GitHub `main` 均提供 **1.3.1**。已有实例需由使用者主动开始升级。
-
-> **测试分支：NSCF 1.3.2-beta.1（`1.3.2-beta.1`）。** 本分支减少 REST 重复数据库读取和内部 Durable Object 调用，修复网页连接失败后立即重试的问题。升级页将其作为可选测试版，稳定版默认仍为 1.3.1。详见[改动及测试范围](docs/testing/REQUEST_BUDGET.md)。
+中英文安装器与 GitHub `main` 均提供 **1.3.2**。已有实例需由使用者主动开始升级。
 
 ## 为什么做这个项目
 
@@ -29,7 +27,15 @@ Nightscout 是一个伟大的项目。作为多年的用户，我希望更多人
 - 在 Admin Tools 中管理记录，按日期预览和清理血糖、治疗及设备状态，保留指定数量的 Profile。
 - 按需启用数据来源与 Webhook；新增接入默认关闭，真实第三方兼容范围仍在验证。
 
-## 1.3.1 更新了什么
+## 1.3.2 更新了什么
+
+- **减少重复数据库读取。** 简单设备状态查询直接在 SQL 中限制所需数量，避免先读最多 5,000 条。未变化的设备状态和治疗查询复用有界精确结果缓存，默认治疗查询使用既有索引；写入和回滚使相关缓存失效，复杂筛选保留原有语义。
+- **减少每个 REST 请求的内部调用。** 合并鉴权与相关数据读取，本地测量的常见成功路径从 3～11 次 Durable Object 调用降至 2 次，保留失败等待、实时权限检查和响应行为。
+- **修复网页连接重试。** 初始化连接失败后等待 5 秒再重试，只保留一个待执行重试；更新后的浏览器程序使用新资源地址，避免继续沿用相同缓存地址下的旧程序。
+
+这些改动最初随 1.3.2-beta.1 提供，现纳入正式版；不新增数据库迁移。[测试记录](docs/testing/REQUEST_BUDGET.md)区分本地测量与真实账号用量：本次修复已复现的问题，但不代表所有反馈的故障都已确定根因，也不保证某个固定的全天用量降幅。
+
+## 保留 1.3.1 的改进
 
 ### 减少 Trio 同步时的重复读取
 
@@ -85,6 +91,7 @@ legacy v1 设备状态上传改为增量更新缓存，避免每次上传后失�
 
 ## 测试进度
 
+- 10 月 15 日正式版验证：**106 个 Workers 测试文件、1,029 项测试通过**，完整项目测试命令、10 项专门的浏览器重试／构建检查、类型检查和打包通过；10 月 15 日升级服务另行通过 **204 项安装器测试**。覆盖范围和边界见[请求与读取测试记录](docs/testing/REQUEST_BUDGET.md)。
 - 9 月 30 日发布验证：**102 个 Workers 测试文件、1,012 项测试通过**，完整项目测试命令、类型检查、源码构建和上游映射检查通过；覆盖回滚、时间窗口、缓存驱逐和交错查询。
 - 此前 15.0.8 适配：355 项官方客户端测试通过、162 项官方服务端插件测试通过；两项上游原有跳过用例仍保留记录，不能宣称全套上游测试通过。
 - 报表：13 项官方模块测试、33 项覆盖层测试，另有合成数据下 11 个报表视图的浏览器验证。
@@ -97,15 +104,15 @@ legacy v1 设备状态上传改为增量更新缓存，避免每次上传后失�
 
 ### 一、首次安装
 
-使用[快速安装器](https://ns.sidluo.com/)部署 **1.3.1**，无需 GitHub 或命令行。
+使用[快速安装器](https://ns.sidluo.com/)部署 **1.3.2**，无需 GitHub 或命令行。
 
-也可以使用 GitHub 一键部署按钮，从 `main` 部署 **1.3.1**，操作见[首次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)。
+也可以使用 GitHub 一键部署按钮，从 `main` 部署 **1.3.2**，操作见[首次部署教程](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started)。
 
 ### 二、升级
 
-通过快速安装器部署、符合识别条件的实例，包括 1.2.0、1.3.0-beta.2 和 1.3.1-beta.1，可在[升级页面](https://ns.sidluo.com/sj/)授权原账号、选择实例并确认升级至 **1.3.1**。升级保留原网址、数据、设置和原密钥，AAPS 继续使用原配置；不会自动升级其他实例。
+通过快速安装器部署、符合识别条件的实例，包括 1.2.0、1.3.0-beta.2、1.3.1 和 1.3.2-beta.1，可在[升级页面](https://ns.sidluo.com/sj/)授权原账号、选择实例并确认升级至 **1.3.2**。升级保留原网址、数据、设置和原密钥，AAPS 继续使用原配置；不会自动升级其他实例。
 
-测试本分支时，在升级页选择 **测试版 · 1.3.2-beta.1**，再确认测试版升级。默认稳定版本仍为 **1.3.1**。
+已使用 1.3.2-beta.1 的实例也可通过同一页面升级至正式版 1.3.2。
 
 GitHub 一键部署或无法识别的实例不适用此通道。若原 `API_SECRET` 使用 Cloudflare Secret，页面会提示先将同一个原值保存为普通文本，再重新检查升级。
 
@@ -119,7 +126,7 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 移植版本。Nightscout 上游版本和移植版本使用各自独立的版本号：
 
 - Nightscout 上游版本：**15.0.8**
-- 本分支 Nightscout for Cloudflare 版本：**1.3.2-beta.1**（稳定版：**1.3.1**）
+- Nightscout for Cloudflare 版本：**1.3.2**
 
 原版 Admin Tools 的对应功能仍然保留，但本项目使用 SQLite Durable Objects
 存储数据，而不是 MongoDB。因此，页面中的部分名称会调整为与实际存储方式无关

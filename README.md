@@ -8,15 +8,13 @@ Deploy Nightscout to your own Cloudflare account without renting a separate serv
 
 This is an independent, unofficial open-source port. Actual costs depend on your Cloudflare plan and usage; application optimizations do not increase the platform's allowances.
 
-> **Stable release: NSCF 1.3.1 · Based on Nightscout 15.0.8.**
+> **Stable release: NSCF 1.3.2 · Based on Nightscout 15.0.8.**
 >
-> Includes the Nightscout 15.0.8 adaptation, AAPS synchronization improvements and the Trio/v1 read optimizations tested in 1.3.1-beta.1. See the [release notes](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.1) and [Trio SQL measurements](docs/testing/TRIO_READ_OPTIMIZATION.md).
+> Reduces repeated REST database reads and internal Durable Object calls, and fixes immediate browser retries after a connection failure. Includes the earlier AAPS and Trio synchronization improvements. See the [release notes](https://github.com/sid-luo/nightscout-for-cloudflare/releases/tag/v1.3.2) and [measurements and test scope](docs/testing/REQUEST_BUDGET.md).
 
 [Web installer](https://nscf.sidluo.com/) · [Upgrade an existing installation](https://nscf.sidluo.com/upgrade/) · [Deploy from GitHub](https://deploy.workers.cloudflare.com/?url=https://github.com/sid-luo/nightscout-for-cloudflare)
 
-Both installers and GitHub `main` provide **1.3.1**. Existing instances update only when their owner starts an upgrade.
-
-> **Testing branch: NSCF 1.3.2-beta.1 (`1.3.2-beta.1`).** This branch reduces repeated REST database reads and internal Durable Object calls, and fixes immediate browser retries after a connection failure. The upgrade page offers it as an optional testing build; stable installations still default to 1.3.1. See [changes and test scope](docs/testing/REQUEST_BUDGET.md).
+Both installers and GitHub `main` provide **1.3.2**. Existing instances update only when their owner starts an upgrade.
 
 ## Why this project exists
 
@@ -29,7 +27,15 @@ Nightscout is a great project. As a long-time user, I hope more people can deplo
 - Manage records in Admin Tools: preview and clean up glucose, treatment and device-status records by date, and retain a chosen number of Profiles.
 - Enable data sources and Webhooks as needed. Newly added integrations are disabled by default; validation with real third-party services is still in progress.
 
-## What is new in 1.3.1
+## What is new in 1.3.2
+
+- **Fewer repeated database reads.** Simple device-status queries apply the requested count directly in SQL instead of first loading up to 5,000 records. Unchanged device-status and treatment queries reuse bounded exact-result caches, and default treatment queries use an existing index. Writes and rollback invalidate the affected cache; complex filtering keeps its existing semantics.
+- **Fewer internal calls per REST request.** Authentication and related data reads are combined. Common successful paths measured at 3–11 Durable Object calls now use 2, while preserving failure delays, current permissions and response behavior.
+- **Controlled browser retries.** Failed connection initialization waits five seconds before retrying, with only one pending retry. Updated browser code uses a new asset URL so the previous bundle is not kept under the same cache key.
+
+These changes were introduced in 1.3.2-beta.1 and are now included in the stable release. No database migration is added. The [test record](docs/testing/REQUEST_BUDGET.md) separates local measurements from real account usage: the fixes address reproduced issues, but do not establish the cause of every reported failure or guarantee a particular daily usage reduction.
+
+## Improvements retained from 1.3.1
 
 ### Fewer repeated reads during Trio synchronization
 
@@ -85,6 +91,7 @@ The basic read optimizations, web upgrade entry points and authorization-navigat
 
 ## Testing progress
 
+- October 15 stable-release verification: **1,029 tests across 106 Workers test files** passed, along with the complete project test command, 10 dedicated browser retry/build checks, type checking and package construction. The October 15 installer verification separately passed **204 installer tests**. Coverage and limits are recorded in the [request/read test record](docs/testing/REQUEST_BUDGET.md).
 - September 30 release verification: **1,012 tests across 102 Workers test files** passed, along with the complete project test command, type checking, source build and upstream-mapping checks. Regression coverage includes rollback, time-window boundaries, cache eviction and interleaved queries.
 - Earlier 15.0.8 adaptation: 355 upstream client tests and 162 upstream server-plugin tests passed. Two pre-existing upstream skipped cases remain documented; this is not a claim that the entire upstream test suite passed.
 - Reports: 13 upstream module tests, 33 overlay tests, and browser checks of 11 report views using synthetic data.
@@ -97,15 +104,15 @@ Known limitations include occasional internal-task connection interruptions, one
 
 ### 1. First installation
 
-Use the [web installer](https://nscf.sidluo.com/) to deploy **1.3.1** without GitHub or a command line.
+Use the [web installer](https://nscf.sidluo.com/) to deploy **1.3.2** without GitHub or a command line.
 
-You can also use the GitHub deployment button to deploy **1.3.1** from `main`, following the [first-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started).
+You can also use the GitHub deployment button to deploy **1.3.2** from `main`, following the [first-time deployment guide](https://github.com/sid-luo/nightscout-for-cloudflare/tree/main/docs/getting-started).
 
 ### 2. Upgrading
 
-For a supported instance deployed through the web installer, including 1.2.0, 1.3.0-beta.2 and 1.3.1-beta.1, open the [English upgrade page](https://nscf.sidluo.com/upgrade/), authorize the original account, select the instance and confirm the upgrade to **1.3.1**. The upgrade preserves your address, data, settings and original API key, so AAPS keeps its existing configuration. Other instances are not upgraded automatically.
+For a supported instance deployed through the web installer, including 1.2.0, 1.3.0-beta.2, 1.3.1 and 1.3.2-beta.1, open the [English upgrade page](https://nscf.sidluo.com/upgrade/), authorize the original account, select the instance and confirm the upgrade to **1.3.2**. The upgrade preserves your address, data, settings and original API key, so AAPS keeps its existing configuration. Other instances are not upgraded automatically.
 
-To test this branch, select **Testing version · 1.3.2-beta.1** on the upgrade page and confirm the testing upgrade. The default stable version remains **1.3.1**.
+Existing 1.3.2-beta.1 installations can upgrade to stable 1.3.2 through the same page.
 
 Instances deployed through the GitHub button or not recognized by the installer are not supported by this path. If the original `API_SECRET` is a Cloudflare Secret, the page asks you to save the same original value as a plain-text variable before checking again.
 
@@ -120,7 +127,7 @@ Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
 - Nightscout upstream version: **15.0.8**
-- Nightscout for Cloudflare version on this branch: **1.3.2-beta.1** (stable: **1.3.1**)
+- Nightscout for Cloudflare version: **1.3.2**
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible

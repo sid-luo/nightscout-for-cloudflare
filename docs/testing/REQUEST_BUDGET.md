@@ -1,6 +1,9 @@
-# 1.3.2-beta.1 request and read optimization
+# 1.3.2 request and read optimization
 
-Testing branch: `1.3.2-beta.1`. Stable remains `1.3.1`.
+Introduced in `1.3.2-beta.1` on October 13, 2026; included in stable `1.3.2` on
+October 15, 2026. This record documents local reproduction, measurements and
+regression coverage. It does not claim that the reporting user has confirmed
+the outcome after upgrading.
 
 ## What changes
 
@@ -52,7 +55,7 @@ status query credentials versus headers, token precedence, failure delay,
 conditional entries responses, plugin output, old-method fallback, read bounds,
 complex filtering and sort ties, empty results, writes, rollback, eviction and
 browser retry timing. The full test command also runs upstream client,
-server-plugin and compatibility checks. The application regression suite contains
+server-plugin and compatibility checks. The October 15 stable-release application regression run passed
 1,029 tests across 106 files. Ten dedicated browser tests execute the shipped
 initializer and verify its built bundle and cache keys; upstream client checks
 include 351 passing cases and four golden cases, with two existing pending
@@ -71,16 +74,19 @@ specific to xDrip4iOS.
 
 ## Upgrade
 
-Supported web-installer instances can choose **1.3.2-beta.1** on the
+Supported web-installer instances, including those running **1.3.2-beta.1**,
+can upgrade to stable **1.3.2** on the
 [English upgrade page](https://nscf.sidluo.com/upgrade/) or
-[Chinese upgrade page](https://ns.sidluo.com/sj/), then confirm the testing
-upgrade. Each upgrade job pins a reviewed package rather than following a
-moving Git branch. Stable and older pinned package assets remain available.
-Existing instances are not upgraded automatically.
+[Chinese upgrade page](https://ns.sidluo.com/sj/). The upgrade retains the
+original address, databases, data, settings and API key. Each upgrade job pins
+a reviewed package rather than following a moving Git branch. Older testing
+packages are no longer offered for new jobs once stable 1.3.2 is current;
+their assets remain available for already pinned jobs. Existing instances are
+not upgraded automatically.
 
 ## 中文说明
 
-本分支同时处理两类开销：减少每个 REST 请求产生的内部 DO 调用，以及减少重复查询
+1.3.2 同时处理两类开销：减少每个 REST 请求产生的内部 DO 调用，以及减少重复查询
 读取的数据库行数。网页连接失败后的立即重试也已修复。这些是 NSCF 通用路径，
 并非 xDrip4iOS 专属问题。
 
@@ -90,5 +96,7 @@ Existing instances are not upgraded automatically.
 也不会减少必要的上传确认。
 
 已确认的内部放大得到修复，但现有附件不覆盖原故障现场，因此仍不能把原个案
-确定归因于某一额度。新版本作为 **1.3.2-beta.1** 测试升级提供，默认稳定版仍为
-**1.3.1**；需要用户在升级页选择测试版并确认。
+确定归因于某一额度，也没有据此宣称已收到该用户升级后的实测确认。改动最初随
+**1.3.2-beta.1** 提供，现纳入正式版 **1.3.2**。已有实例（含 beta.1）可在升级页
+主动升级，保留原网址、数据库、数据、设置和原密钥；旧测试包仅保留给已固定版本
+的任务继续使用，不再供新任务选择。

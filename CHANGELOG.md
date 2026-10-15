@@ -1,10 +1,22 @@
 # Changelog
 
+## 1.3.2 — Stable release with fewer requests and database reads (2026-10-15)
+
+Promotes the request and read optimizations introduced in 1.3.2-beta.1 to the stable release:
+
+- Simple device-status count queries read only the requested candidate limit in SQL. Bounded exact-result caches reuse unchanged device-status and treatment responses, including empty results; default treatment queries use an existing index.
+- Common successful REST paths use **2 Durable Object RPCs instead of 3–11** in local tests. Authorization failure delays, current permissions and response semantics are preserved.
+- Failed browser connection initialization waits **five seconds** before retrying, with one pending retry and obsolete callbacks ignored. The updated browser bundle receives a new asset URL and cache key.
+
+No database migration is added. GitHub `main` and both web installers provide **1.3.2**. Supported existing installations, including 1.3.2-beta.1, can upgrade while keeping their address, data, settings and original API key. The older testing build is no longer offered for new jobs; existing pinned testing jobs can still resume with their original package. Existing instances are not upgraded automatically.
+
+See [measurements, regression coverage and limits](docs/testing/REQUEST_BUDGET.md). These changes fix reproduced NSCF issues; the exact cause and exhausted quota in the original user report remain unconfirmed.
+
 ## 1.3.2-beta.1 — Request and database-read optimization (2026-10-13, testing branch)
 
 The `1.3.2-beta.1` branch limits count-only device-status reads in SQL, caches exact unchanged device-status and treatment responses, and uses the existing treatment index. REST authentication resolves within one Durable Object call; entry freshness and data, and plugin context and status, each share a single data call. Authorization failure delays and current role checks remain in place. Browser initialization now waits five seconds before retrying a failed connection, with one pending retry and obsolete callbacks ignored. Updated client code receives a new asset URL.
 
-This is an optional testing upgrade. The stable default remains **1.3.1**. No new database migration is introduced, and uploads, history, filtering and output semantics are retained. See [measurements, regression coverage and limits](docs/testing/REQUEST_BUDGET.md). These fixes address reproduced amplification in NSCF; the original report's exact exhausted Cloudflare quota is still unconfirmed.
+At its October 13 publication, this was an optional testing upgrade and the stable default remained **1.3.1**. The changes were subsequently included in stable 1.3.2. No new database migration is introduced, and uploads, history, filtering and output semantics are retained. See [measurements, regression coverage and limits](docs/testing/REQUEST_BUDGET.md). These fixes address reproduced amplification in NSCF; the original report's exact exhausted Cloudflare quota is still unconfirmed.
 
 ## 1.3.1 — Stable release with Trio read optimization (2026-09-30)
 
@@ -12,7 +24,7 @@ Promotes the Nightscout 15.0.8 adaptation and the tested 1.3.1-beta.1 runtime to
 
 With an active browser, the same synthetic 163-upload workload fell from **13,700 to 6,123 rows read**, with **3,111 rows written in both runs**. A separate workload with 2,000 treatment rows fell from **3,490,578 to 6,123 reads** after the initial v1 cache fix. These are targeted local measurements, not account-wide billing predictions. The application passed **1,012 Workers tests across 102 files**; see [measurement scope and validation](docs/testing/TRIO_READ_OPTIMIZATION.md).
 
-GitHub `main` and both web installers now provide **1.3.1**. Supported existing installations can select it on the upgrade page while retaining their address, original databases, settings and API key. The upgrade page also supports explicitly confirmed testing builds when a newer one is available, pins the selected package through retries and blocks recognized downgrades. Existing instances are not updated automatically.
+At its September 30 publication, GitHub `main` and both web installers began providing **1.3.1**. Supported existing installations can select it on the upgrade page while retaining their address, original databases, settings and API key. The upgrade page also supports explicitly confirmed testing builds when a newer one is available, pins the selected package through retries and blocks recognized downgrades. Existing instances are not updated automatically.
 
 Includes the AAPS synchronization, report, time-zone, Admin Tools and integration changes documented under beta.2. Default-off third-party integrations still need real-service acceptance, and previously recorded runtime limitations remain open. The original reported Trio authentication failure is not confirmed to have been caused by read amplification.
 
