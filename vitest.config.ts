@@ -24,6 +24,8 @@ export default defineConfig({
           API_SECRET: TEST_API_SECRET,
           AUTH_DEFAULT_ROLES: "readable",
           AUTH_FAIL_DELAY: "1",
+          // Opt in only when running this local CPU diagnostic in isolation.
+          TREATMENT_ARRAY_CPU_BENCHMARK: process.env.TREATMENT_ARRAY_CPU_BENCHMARK ?? "0",
         },
       },
     }),

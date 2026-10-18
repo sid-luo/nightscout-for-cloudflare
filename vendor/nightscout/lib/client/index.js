@@ -12,6 +12,7 @@ var units = require('../units')();
 var levels = require('../levels');
 var times = require('../times');
 var receiveDData = require('./receiveddata');
+var requestErrors = require('./request-errors');
 
 var brushing = false;
 
@@ -22,6 +23,7 @@ var timezones = moment.tz.names();
 var client = {};
 var initRetryTimer = null;
 var initAttempt = 0;
+var initFailures = 0;
 
 function clearInitRetry () {
   if (initRetryTimer !== null) {
@@ -58,18 +60,37 @@ client.init = function init (callback) {
   clearInitRetry();
   var attempt = ++initAttempt;
 
-  function retryInit () {
+  function retryInit (delay) {
     if (attempt !== initAttempt || initRetryTimer !== null) return;
     initRetryTimer = window.setTimeout(function retryAfterDelay () {
       initRetryTimer = null;
       if (attempt === initAttempt) client.init(callback);
-    }, 5000);
+    }, delay || 5000);
   }
 
   client.browserUtils = require('./browser-utils')($);
 
   var token = client.browserUtils.queryParms().token;
   var secret = client.hashauth.apisecrethash || Storages.localStorage.get('apisecrethash');
+  var headers = client.headers();
+  var credentials = JSON.stringify([token, secret, headers]);
+  var settled = false;
+
+  function acceptCurrentResponse () {
+    if (attempt !== initAttempt || settled) return false;
+    settled = true;
+    var currentToken = client.browserUtils.queryParms().token;
+    var currentSecret = client.hashauth.apisecrethash || Storages.localStorage.get('apisecrethash');
+    if (credentials !== JSON.stringify([currentToken, currentSecret, client.headers()])) {
+      // Refreshing a token can race either a success or an authorization
+      // failure. Neither response describes the current credential anymore.
+      var delay = requestErrors.retryDelay(null, initFailures++);
+      requestErrors.showTemporaryFailure($, null, delay);
+      retryInit(delay);
+      return false;
+    }
+    return true;
+  }
 
   var src = '/api/v1/status.json?t=' + new Date().getTime();
 
@@ -82,9 +103,10 @@ client.init = function init (callback) {
   $.ajax({
     method: 'GET'
     , url: src
-    , headers: client.headers()
+    , headers: headers
+    , timeout: 30000
   }).done(function success (serverSettings) {
-    if (attempt !== initAttempt) return;
+    if (!acceptCurrentResponse()) return;
     if (serverSettings.runtimeState !== 'loaded') {
       console.log('Server is still loading data');
       $('#loadingMessageText').html('Nightscout is still starting and should be available within about 15 seconds.');
@@ -92,45 +114,43 @@ client.init = function init (callback) {
       return;
     }
     clearInitRetry();
+    initFailures = 0;
     client.settingsFailed = false;
     client.loadLanguage(serverSettings, callback);
   }).fail(function fail (jqXHR) {
-    if (attempt !== initAttempt) return;
+    if (!acceptCurrentResponse()) return;
 
-    // check if we couldn't reach the server at all, show offline message
-    if (!jqXHR.readyState) {
-      console.log('Application appears to be OFFLINE');
-      $('#loadingMessageText').html('Connecting to Nightscout server failed, retrying every 5 seconds');
-      retryInit();
+    if (!requestErrors.isAuthenticationFailure(jqXHR)) {
+      var delay = requestErrors.retryDelay(jqXHR, initFailures++);
+      requestErrors.showTemporaryFailure($, jqXHR, delay);
+      retryInit(delay);
       return;
     }
 
-    //no server setting available, use defaults, auth, etc
-    if (client.settingsFailed) {
-      console.log('Already tried to get settings after auth, but failed');
+    // A real authorization denial still requires the user to authenticate.
+    // Reopen the dialog if permissions were revoked after a previous attempt.
+    initFailures = 0;
+    client.settingsFailed = true;
+
+    // detect browser language
+    var lang = Storages.localStorage.get('language') || (navigator.language || navigator.userLanguage).toLowerCase();
+    if (lang !== 'zh_cn' && lang !== 'zh-cn' && lang !== 'zh_tw' && lang !== 'zh-tw') {
+      lang = lang.substring(0, 2);
     } else {
-      client.settingsFailed = true;
-
-      // detect browser language
-      var lang = Storages.localStorage.get('language') || (navigator.language || navigator.userLanguage).toLowerCase();
-      if (lang !== 'zh_cn' && lang !== 'zh-cn' && lang !== 'zh_tw' && lang !== 'zh-tw') {
-        lang = lang.substring(0, 2);
-      } else {
-        lang = lang.replace('-', '_');
-      }
-      if (language.languages.find(l => l.code === lang)) {
-        language.set(lang);
-      } else {
-        language.set('en');
-      }
-
-      client.translate = language.translate;
-      // auth failed, hide loader and request for key
-      $('#centerMessagePanel').hide();
-      client.hashauth.requestAuthentication(function afterRequest () {
-        retryInit();
-      });
+      lang = lang.replace('-', '_');
     }
+    if (language.languages.find(l => l.code === lang)) {
+      language.set(lang);
+    } else {
+      language.set('en');
+    }
+
+    client.translate = language.translate;
+    // auth failed, hide loader and request for key
+    $('#centerMessagePanel').hide();
+    client.hashauth.requestAuthentication(function afterRequest () {
+      retryInit();
+    });
   });
 
 };
@@ -307,8 +327,8 @@ client.load = function load (serverSettings, callback) {
 
   client.afterAuth = function afterAuth (isAuthenticated) {
 
-    var treatmentCreateAllowed = client.authorized ? client.authorized.check('api:treatments:create') : isAuthenticated;
-    var treatmentUpdateAllowed = client.authorized ? client.authorized.check('api:treatments:update') : isAuthenticated;
+    var treatmentCreateAllowed = client.authorized ? client.authorized.check('api:treatments:create') : isAuthenticated && client.hashauth.hasWritePermission;
+    var treatmentUpdateAllowed = client.authorized ? client.authorized.check('api:treatments:update') : isAuthenticated && client.hashauth.hasWritePermission;
 
     $('#lockedToggle').click(client.hashauth.requestAuthentication).toggle(!treatmentCreateAllowed && client.settings.showPlugins.indexOf('careportal') > -1);
     $('#treatmentDrawerToggle').toggle(treatmentCreateAllowed && client.settings.showPlugins.indexOf('careportal') > -1);
@@ -861,15 +881,19 @@ client.load = function load (serverSettings, callback) {
 
   function refreshAuthIfNeeded () {
     var clientToken = client.authorized ? client.authorized.token : null;
-    var token = client.browserUtils.queryParms().token || clientToken;
+    // Renew the active identity, including after a form-based switch. A token
+    // left in the page URL can describe the preceding session.
+    var token = clientToken || client.browserUtils.queryParms().token;
     if (token && client.authorized) {
       var renewTime = (client.authorized.exp * 1000) - times.mins(15).msecs - Math.abs((client.authorized.iat * 1000) - client.authorized.lat);
       var refreshIn = Math.round((renewTime - client.now) / 1000);
       if (client.now > renewTime) {
         console.info('Refreshing authorization renewal');
+        var session = client.authorized;
+        var secret = client.hashauth.hash();
         $.ajax('/api/v2/authorization/request/' + token, {
           success: function(authorized) {
-            if (authorized) {
+            if (authorized && client.authorized === session && client.hashauth.hash() === secret) {
               console.info('Got new authorization', authorized);
               authorized.lat = client.now;
               client.authorized = authorized;

@@ -2,6 +2,7 @@
 
 var Storages = require('js-storage');
 var textAsHtml = require('../utils/html').textAsHtml;
+var requestErrors = require('./request-errors');
 
 function canUseSubtleCrypto () {
   return typeof window !== 'undefined'
@@ -190,47 +191,127 @@ hashauth.init = function init (client, $) {
   hashauth.isAdmin = false;
   hashauth.hasWritePermission = false;
   hashauth.permissionlevel = 'NONE';
+  var verificationAttempt = 0;
+  var secretAttempt = 0;
+  var verificationRetryTimer = null;
+  var verifiedCredentials = null;
 
-  hashauth.verifyAuthentication = function verifyAuthentication (next) {
+  function cancelVerification () {
+    verificationAttempt++;
+    if (verificationRetryTimer !== null) {
+      window.clearTimeout(verificationRetryTimer);
+      verificationRetryTimer = null;
+    }
+  }
+
+  function resetPermissions () {
     hashauth.authenticated = false;
-    $.ajax({
-      method: 'GET'
-      , url: '/api/v1/verifyauth?t=' + Date.now() //cache buster
-      , headers: client.headers()
-    }).done(function verifysuccess (response) {
+    hashauth.tokenauthenticated = false;
+    hashauth.hasReadPermission = false;
+    hashauth.hasWritePermission = false;
+    hashauth.isAdmin = false;
+    hashauth.permissionlevel = 'NONE';
+  }
 
+  hashauth.verifyAuthentication = function verifyAuthentication (next, candidateDigest) {
+    cancelVerification();
+    var attempt = verificationAttempt;
+    var failures = 0;
+    var temporaryFailure = false;
+    var isCandidate = typeof candidateDigest === 'string';
 
-      var message = response.message;
+    function denied (failure) {
+      // A rejected form submission says nothing about the still-active session.
+      // Ordinary revalidation of that session must still revoke on denial.
+      if (!isCandidate) hashauth.removeAuthentication();
+      next(false, failure);
+    }
 
-      if (message.canRead) { hashauth.hasReadPermission = true; }
-      if (message.canWrite) { hashauth.hasWritePermission = true; }
-      if (message.isAdmin) { hashauth.isAdmin = true; }
-      if (message.permissions) { hashauth.permissionlevel = message.permissions; }
+    function retryVerification (request) {
+      if (attempt !== verificationAttempt || verificationRetryTimer !== null) return;
+      var delay = requestErrors.retryDelay(request, failures++);
+      hashauth.injectHtml();
+      requestErrors.showTemporaryFailure($, request, delay);
+      temporaryFailure = true;
+      verificationRetryTimer = window.setTimeout(function retryAfterDelay () {
+        verificationRetryTimer = null;
+        if (attempt === verificationAttempt) verify();
+      }, delay);
+    }
 
-      if (message.rolefound == 'FOUND') {
-        hashauth.tokenauthenticated = true;
-        console.log('Token Authentication passed.');
-        next(true);
-        return;
+    function verify () {
+      // Never let a valid Bearer session authenticate a different form input.
+      // Keep the active credential intact until this exact candidate succeeds.
+      var headers = isCandidate ? { 'api-secret': candidateDigest } : client.headers();
+      var credentials = JSON.stringify(headers);
+      // Retain previously verified permissions through an outage only while
+      // checking the same credential. A newly entered secret grants nothing.
+      if (!isCandidate && credentials !== verifiedCredentials) resetPermissions();
+      var settled = false;
+
+      function acceptCurrentResponse () {
+        if (attempt !== verificationAttempt || settled) return false;
+        settled = true;
+        if (!isCandidate && credentials !== JSON.stringify(client.headers())) {
+          // A background JWT refresh does not call verifyAuthentication and
+          // therefore does not advance its attempt. Discard the old result
+          // and recheck the current credential with the same bounded backoff.
+          resetPermissions();
+          retryVerification({ status: 503 });
+          return false;
+        }
+        return true;
       }
 
-      if (response.message === 'OK' || message.message === 'OK') {
-        hashauth.authenticated = true;
-        console.log('Authentication passed.');
-        next(true);
-        return;
-      }
-
-      console.log('Authentication failed!', response);
-      hashauth.removeAuthentication();
-      next(false);
-      return;
-
-    }).fail(function verifyfail (err) {
-      console.log('Authentication failure', err);
-      hashauth.removeAuthentication();
-      next(false);
-    });
+      $.ajax({
+        method: 'GET'
+        , url: '/api/v1/verifyauth?t=' + Date.now() //cache buster
+        , headers: headers
+        , timeout: 30000
+      }).done(function verifysuccess (response) {
+        if (!acceptCurrentResponse()) return;
+        var message = response && response.message;
+        var tokenFound = message && message.rolefound === 'FOUND';
+        var authorized = message === 'OK' || message && message.message === 'OK';
+        if (authorized || tokenFound && !isCandidate) {
+          if (isCandidate) {
+            client.authorized = null;
+            hashauth.apisecrethash = candidateDigest;
+          }
+          // Refresh every flag, including permission reductions and token/admin
+          // transitions; retaining a previous true flag would hide revocation.
+          resetPermissions();
+          hashauth.hasReadPermission = !!message.canRead;
+          hashauth.hasWritePermission = !!message.canWrite;
+          hashauth.isAdmin = !!message.isAdmin;
+          hashauth.permissionlevel = message.permissions || 'NONE';
+          hashauth.tokenauthenticated = !!tokenFound;
+          hashauth.authenticated = !tokenFound;
+          verifiedCredentials = credentials;
+          if (temporaryFailure) {
+            $('#authenticationmessage').html('');
+            $('#centerMessagePanel').hide();
+          }
+          next(true);
+          return;
+        }
+        if (message === 'UNAUTHORIZED' || message && message.message === 'UNAUTHORIZED') {
+          denied();
+          return;
+        }
+        // A malformed success response is a service failure, not evidence that
+        // the user's secret is wrong.
+        retryVerification({ status: 502 });
+      }).fail(function verifyfail (err) {
+        if (!acceptCurrentResponse()) return;
+        if (requestErrors.isAuthenticationFailure(err)) {
+          denied({ status: err.status });
+        } else {
+          retryVerification(err);
+        }
+      });
+    }
+    verify();
   };
 
   hashauth.injectHtml = function injectHtml () {
@@ -250,17 +331,16 @@ hashauth.init = function init (client, $) {
   };
 
   hashauth.removeAuthentication = function removeAuthentication (event) {
-
+    cancelVerification();
+    var wasAuthenticated = hashauth.authenticated || hashauth.tokenauthenticated;
     Storages.localStorage.remove('apisecrethash');
-
-    if (hashauth.authenticated || hashauth.tokenauthenticated) {
-      client.browserUtils.reload();
-    }
-
     // clear everything just in case
     hashauth.apisecret = null;
     hashauth.apisecrethash = null;
-    hashauth.authenticated = false;
+    verifiedCredentials = null;
+    resetPermissions();
+    client.authorized = null;
+    if (wasAuthenticated) client.browserUtils.reload();
 
     if (event) {
       event.preventDefault();
@@ -322,37 +402,50 @@ hashauth.init = function init (client, $) {
 
   hashauth.processSecret = async function processSecret (apisecret, storeapisecret, callback) {
     var translate = client.translate;
+    var submission = ++secretAttempt;
+    // A locally rejected submission also replaces the previous form action.
+    // It must not leave an older HTTP request or quota retry able to sign in.
+    cancelVerification();
+    var attempt = verificationAttempt;
+    var remember = storeapisecret;
 
-    hashauth.apisecret = apisecret;
-    hashauth.storeapisecret = storeapisecret;
-    if (!hashauth.apisecret || hashauth.apisecret.length < 12) {
+    if (!apisecret || apisecret.length < 12) {
       window.alert(translate('Too short API secret'));
       if (callback) {
         callback(false);
       }
     } else {
       try {
-        hashauth.apisecrethash = await sha1Hex(hashauth.apisecret);
-
-        hashauth.verifyAuthentication(function(isok) {
+        var digest = await sha1Hex(apisecret);
+        if (submission !== secretAttempt || attempt !== verificationAttempt) return;
+        hashauth.verifyAuthentication(function(isok, failure) {
+          if (submission !== secretAttempt) return;
           if (isok) {
-            if (hashauth.storeapisecret) {
-              Storages.localStorage.set('apisecrethash', hashauth.apisecrethash);
+            hashauth.apisecret = apisecret;
+            hashauth.storeapisecret = remember;
+            hashauth.apisecrethash = digest;
+            if (remember) {
+              Storages.localStorage.set('apisecrethash', digest);
               // TODO show dialog first, then reload
               if (hashauth.tokenauthenticated) client.browserUtils.reload();
+            } else {
+              // A successful unchecked switch must not reload into an older
+              // remembered identity. Failed or pending candidates leave it alone.
+              Storages.localStorage.remove('apisecrethash');
             }
             $('#authentication_placeholder').html(hashauth.inlineCode());
             if (callback) {
               callback(true);
             }
           } else {
-            alert(translate('Wrong API secret'));
+            window.alert(translate(failure && failure.status === 403 ? 'Access denied for this secret or token' : 'Wrong API secret'));
             if (callback) {
               callback(false);
             }
           }
-        });
+        }, digest);
       } catch (error) {
+        if (submission !== secretAttempt) return;
         console.error('Error hashing API secret:', error);
         if (callback) {
           callback(false);
@@ -403,6 +496,7 @@ hashauth.init = function init (client, $) {
       '<div id="requestauthenticationdialog" style="display:none" title="' + translate('Device authentication') + '">' +
       '<label for="apisecret">' + translate('Your API secret or token') + ': </label>' +
       '<input type="password" id="apisecret" size="20" style="width: 100%;"/>' +
+      '<div id="authenticationmessage" role="status"></div>' +
       '<br>' +
       '<input type="checkbox" id="storeapisecret" /> <label for="storeapisecret">' + translate('Remember this device. (Do not enable this on public computers.)') + '</label>' +
       '</div>' +

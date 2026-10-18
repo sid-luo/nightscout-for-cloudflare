@@ -129,7 +129,7 @@ describe("entry cache staleness and recovery", () => {
           try {
             expect(observe(internal, now, runtime), label).toEqual(warm);
             expect(freshSql.mock.calls.filter(([statement]) => statement.includes("collection = 'entries'") &&
-              statement.includes("$.sgv") && statement.includes("LIMIT 64"))).toHaveLength(2);
+              statement.includes("$.sgv") && statement.includes("LIMIT 64"))).toHaveLength(1);
           } finally {
             freshSql.mockRestore();
             internal.realtimeEntryQueries = committed;

@@ -10,17 +10,20 @@ const indexPredicate = " AND collection IN ('treatments', 'devicestatus') AND js
 function observeTreatmentReads(instance: EntryStore, storage: DurableObjectStorage) {
   const exec = storage.sql.exec.bind(storage.sql);
   let cursors: SqlStorageCursor<Record<string, SqlStorageValue>>[] = [];
+  let documentSqlCalls = 0;
   const spy = vi.spyOn(storage.sql, "exec").mockImplementation((sql, ...bindings) => {
     const cursor = exec(sql, ...bindings);
     cursors.push(cursor);
+    if (sql.startsWith("SELECT") && sql.includes("FROM documents")) documentSqlCalls++;
     return cursor;
   });
   return {
     restore: () => spy.mockRestore(),
     read: async (query: DocumentQuery, uuidHandling = true) => {
       cursors = [];
+      documentSqlCalls = 0;
       const result = await instance.queryLegacyTreatmentsWithUuidHandling(JSON.stringify(query), uuidHandling);
-      return { result, documents: JSON.parse(result) as JsonDocument[], sqlCalls: cursors.length,
+      return { result, documents: JSON.parse(result) as JsonDocument[], sqlCalls: cursors.length, documentSqlCalls,
         rowsRead: cursors.reduce((sum, cursor) => sum + cursor.rowsRead, 0),
         rowsWritten: cursors.reduce((sum, cursor) => sum + cursor.rowsWritten, 0) };
     },
@@ -28,7 +31,7 @@ function observeTreatmentReads(instance: EntryStore, storage: DurableObjectStora
 }
 
 describe("legacy treatment REST read budget", () => {
-  it("uses the existing date index for recent category matches without changing results", async () => {
+  it("uses the treatment category index for recent matches without changing results", async () => {
     const stub = env.ENTRY_STORE.getByName(`legacy-treatment-budget-${crypto.randomUUID()}`);
     const measurements = await runInDurableObject(stub, (_instance, state) => {
       const repository = new SqliteDocumentRepository(state.storage);
@@ -62,9 +65,11 @@ describe("legacy treatment REST read budget", () => {
           ] };
           captured = [];
           const actual = repository.queryLegacyTreatments(query);
-          const statement = captured.find(item => item.sql.startsWith("SELECT * FROM documents"))!;
+          const statement = captured.find(item => item.sql.startsWith("SELECT") && item.sql.includes("FROM documents"))!;
           expect(statement).toBeDefined();
-          const baseline = exec(statement.sql.replace(indexPredicate, ""), ...statement.bindings);
+          const baseline = exec(statement.sql
+            .replaceAll(" INDEXED BY documents_treatments_event_type_created_at", "")
+            .replaceAll(indexPredicate, ""), ...statement.bindings);
           const expected = baseline.toArray().map(row => ({ ...JSON.parse(String(row.body)), _id: row.id }));
           expect(actual).toEqual(expected);
           const plan = exec(`EXPLAIN QUERY PLAN ${statement.sql}`, ...statement.bindings).toArray();
@@ -72,7 +77,7 @@ describe("legacy treatment REST read budget", () => {
             afterReads: statement.cursor.rowsRead, afterWrites: statement.cursor.rowsWritten, plan });
           if (eventType === "Sensor Change") {
             expect(statement.cursor.rowsRead).toBeLessThan(30);
-            expect(JSON.stringify(plan)).toContain("documents_collection_created_at");
+            expect(JSON.stringify(plan)).toContain("documents_treatments_event_type_created_at");
           }
         }
       } finally { spy.mockRestore(); }
@@ -138,7 +143,7 @@ describe("legacy treatment REST read budget", () => {
       const exec = state.storage.sql.exec.bind(state.storage.sql);
       let selected: { sql: string; bindings: SqlStorageValue[] } | undefined;
       const spy = vi.spyOn(state.storage.sql, "exec").mockImplementation((sql, ...bindings) => {
-        if (sql.startsWith("SELECT * FROM documents")) selected = { sql: sql.replace(/\s+/g, " ").trim(), bindings };
+        if (sql.startsWith("SELECT") && sql.includes("FROM documents")) selected = { sql: sql.replace(/\s+/g, " ").trim(), bindings };
         return exec(sql, ...bindings);
       });
       try {
@@ -148,7 +153,8 @@ describe("legacy treatment REST read budget", () => {
           expect(selected).toBeDefined();
           const statement = selected!;
           const expected = exec<{ id: string; body: string }>(
-            statement.sql.replace(indexPredicate, ""), ...statement.bindings,
+            statement.sql.replaceAll(" INDEXED BY documents_treatments_event_type_created_at", "")
+              .replaceAll(indexPredicate, ""), ...statement.bindings,
           ).toArray().map(row => {
             const document: JsonDocument = { ...JSON.parse(row.body), _id: row.id };
             return query.fields === undefined || query.fields.includes("_all") ? document
@@ -179,12 +185,14 @@ describe("legacy treatment REST read budget", () => {
       try {
         for (const query of [matched, { ...matched, filters: [{ field: "eventType", operator: "eq", value: "Absent Synthetic Type" }] } as DocumentQuery]) {
           const first = await observer.read(query);
-          expect(first.rowsRead).toBeGreaterThan(0);
+          // An indexed cold miss can execute its data query without visiting
+          // any stored row. Distinguish that from a cache hit by SQL calls.
+          expect(first.documentSqlCalls).toBeGreaterThan(0);
           expect(first.rowsWritten).toBe(0);
           expect(first.documents).toHaveLength(query === matched ? 1 : 0);
           const repeat = await observer.read(query);
           expect(repeat.result).toBe(first.result);
-          expect(repeat).toMatchObject({ sqlCalls: 0, rowsRead: 0, rowsWritten: 0 });
+          expect(repeat).toMatchObject({ documentSqlCalls: 0, rowsRead: 0, rowsWritten: 0 });
         }
         const variants: { query: DocumentQuery; notes: unknown[] }[] = [
           { query: { ...matched, limit: 2 }, notes: ["newest", "older"] },
@@ -195,21 +203,21 @@ describe("legacy treatment REST read budget", () => {
         ];
         for (const { query, notes } of variants) {
           const first = await observer.read(query);
-          expect(first.sqlCalls).toBeGreaterThan(0);
+          expect(first.documentSqlCalls).toBeGreaterThan(0);
           expect(first.documents.map(document => document.notes)).toEqual(notes);
           if (query.fields) expect(first.documents).toEqual([{ notes: "newest" }]);
-          expect(await observer.read(query)).toMatchObject({ result: first.result, sqlCalls: 0, rowsRead: 0 });
+          expect(await observer.read(query)).toMatchObject({ result: first.result, documentSqlCalls: 0, rowsRead: 0 });
         }
         // The method argument overrides a conflicting serialized query flag.
         const uuidQuery: DocumentQuery = { filters: [{ field: "_id", operator: "eq", value: uuid }], legacyUuidHandling: false };
         for (const uuidHandling of [true, false]) {
           const first = await observer.read(uuidQuery, uuidHandling);
-          expect(first.sqlCalls).toBeGreaterThan(0);
+          expect(first.documentSqlCalls).toBeGreaterThan(0);
           expect(first.documents).toHaveLength(uuidHandling ? 1 : 0);
-          expect(await observer.read(uuidQuery, uuidHandling)).toMatchObject({ result: first.result, sqlCalls: 0, rowsRead: 0 });
+          expect(await observer.read(uuidQuery, uuidHandling)).toMatchObject({ result: first.result, documentSqlCalls: 0, rowsRead: 0 });
         }
         await instance.createDocuments("devicestatus", JSON.stringify([{ _id: id(4), created_at: "2026-10-13T00:00:00Z", device: "synthetic" }]));
-        expect(await observer.read(matched)).toMatchObject({ sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(matched)).toMatchObject({ documentSqlCalls: 0, rowsRead: 0 });
       } finally { observer.restore(); }
     });
   });
@@ -226,22 +234,22 @@ describe("legacy treatment REST read budget", () => {
       };
       try {
         expect((await observer.read(query)).documents).toEqual([]);
-        expect(await observer.read(query)).toMatchObject({ sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(query)).toMatchObject({ documentSqlCalls: 0, rowsRead: 0 });
         await instance.createDocuments("treatments", JSON.stringify([document]));
         const created = await observer.read(query);
         expect(created.sqlCalls).toBeGreaterThan(0);
         expect(created.documents[0]?.notes).toBe("created");
-        expect(await observer.read(query)).toMatchObject({ result: created.result, sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(query)).toMatchObject({ result: created.result, documentSqlCalls: 0, rowsRead: 0 });
         await instance.saveLegacyTreatmentsWithUuidHandling(JSON.stringify([{ ...document, notes: "updated" }]), true);
         const updated = await observer.read(query);
         expect(updated.sqlCalls).toBeGreaterThan(0);
         expect(updated.documents[0]?.notes).toBe("updated");
-        expect(await observer.read(query)).toMatchObject({ result: updated.result, sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(query)).toMatchObject({ result: updated.result, documentSqlCalls: 0, rowsRead: 0 });
         expect(await instance.deleteLegacyTreatmentWithUuidHandling(id(1), true)).toBe(true);
         const deleted = await observer.read(query);
         expect(deleted.sqlCalls).toBeGreaterThan(0);
         expect(deleted.documents).toEqual([]);
-        expect(await observer.read(query)).toMatchObject({ result: deleted.result, sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(query)).toMatchObject({ result: deleted.result, documentSqlCalls: 0, rowsRead: 0 });
 
         for (const callback of ["realtime", "data"] as const) {
           const original = callback === "realtime"
@@ -268,7 +276,7 @@ describe("legacy treatment REST read budget", () => {
           const committed = await observer.read(query);
           expect(committed.sqlCalls).toBeGreaterThan(0);
           expect(committed.documents).toEqual([]);
-          expect(await observer.read(query)).toMatchObject({ result: committed.result, sqlCalls: 0, rowsRead: 0 });
+          expect(await observer.read(query)).toMatchObject({ result: committed.result, documentSqlCalls: 0, rowsRead: 0 });
         }
       } finally { observer.restore(); }
     });
@@ -284,12 +292,12 @@ describe("legacy treatment REST read budget", () => {
       const firstQuery: DocumentQuery = { limit: 1, skip: 0 };
       try {
         const first = await observer.read(firstQuery);
-        expect(await observer.read(firstQuery)).toMatchObject({ result: first.result, sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(firstQuery)).toMatchObject({ result: first.result, documentSqlCalls: 0, rowsRead: 0 });
         for (let skip = 1; skip <= 128; skip++) await observer.read({ limit: 1, skip });
         const evicted = await observer.read(firstQuery);
         expect(evicted.result).toBe(first.result);
         expect(evicted.sqlCalls).toBeGreaterThan(0);
-        expect(await observer.read(firstQuery)).toMatchObject({ result: first.result, sqlCalls: 0, rowsRead: 0 });
+        expect(await observer.read(firstQuery)).toMatchObject({ result: first.result, documentSqlCalls: 0, rowsRead: 0 });
       } finally { observer.restore(); }
     });
   });

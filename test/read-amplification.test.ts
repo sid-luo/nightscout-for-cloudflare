@@ -109,22 +109,22 @@ describe("synthetic device-status read amplification", () => {
         {
           "label": "upload-no-browser",
           "reads": 13,
-          "writes": 14,
+          "writes": 15,
         },
         {
           "label": "browser-connect",
-          "reads": 2130,
+          "reads": 1842,
           "writes": 32,
         },
         {
           "label": "upload-with-browser",
           "reads": 17,
-          "writes": 15,
+          "writes": 16,
         },
       ]
     `);
     // Keep created_at cleanup indexed; v29 saves one unused ledger index row.
-    expect(measurements[2]!.writes).toBe(15);
+    expect(measurements[2]!.writes).toBe(16);
     for (const measurement of measurements) {
       expect(measurement.reads).toBeGreaterThan(0);
       expect(measurement.writes).toBeGreaterThan(0);

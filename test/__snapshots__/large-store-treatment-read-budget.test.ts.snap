@@ -1,0 +1,152 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`large old stores that defer native treatment read indexes > uses only the complete progressive index for large-history misses, date ties and genuine uploads 1`] = `
+{
+  "auxiliaries": [
+    {
+      "plans": [
+        [
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY",
+        ],
+        [
+          "SEARCH documents USING COVERING INDEX documents_collection_sort (collection=? AND sort_time>?)",
+        ],
+      ],
+      "reads": 3,
+      "upload": 0,
+      "writes": 0,
+    },
+    {
+      "plans": [
+        [
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY",
+        ],
+        [
+          "SEARCH documents USING COVERING INDEX documents_collection_sort (collection=? AND sort_time>?)",
+        ],
+      ],
+      "reads": 3,
+      "upload": 1,
+      "writes": 0,
+    },
+    {
+      "plans": [
+        [
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY",
+        ],
+        [
+          "SEARCH documents USING COVERING INDEX documents_collection_sort (collection=? AND sort_time>?)",
+        ],
+      ],
+      "reads": 3,
+      "upload": 2,
+      "writes": 0,
+    },
+  ],
+  "partialReads": 20002,
+  "queries": [
+    {
+      "plans": [
+        [
+          "SCAN treatment_read_side_keys USING COVERING INDEX treatment_read_side_date",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+        ],
+      ],
+      "query": {
+        "limit": 1,
+      },
+      "reads": 3,
+    },
+    {
+      "plans": [
+        [
+          "MERGE (UNION ALL)",
+          "LEFT",
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "CORRELATED SCALAR SUBQUERY 1",
+          "SCAN item VIRTUAL TABLE INDEX 3:",
+          "RIGHT",
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "CORRELATED SCALAR SUBQUERY 3",
+          "SCAN item VIRTUAL TABLE INDEX 3:",
+        ],
+      ],
+      "query": {
+        "filters": [
+          {
+            "field": "eventType",
+            "operator": "eq",
+            "value": "Pump Battery Change",
+          },
+        ],
+        "limit": 1,
+      },
+      "reads": 1,
+    },
+    {
+      "plans": [
+        [
+          "MERGE (UNION ALL)",
+          "LEFT",
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "CORRELATED SCALAR SUBQUERY 1",
+          "SCAN item VIRTUAL TABLE INDEX 3:",
+          "RIGHT",
+          "SEARCH treatment_read_side_keys USING COVERING INDEX treatment_read_side_category (read_event_type=? AND read_event_value=?)",
+          "SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)",
+          "CORRELATED SCALAR SUBQUERY 3",
+          "SCAN item VIRTUAL TABLE INDEX 3:",
+        ],
+      ],
+      "query": {
+        "filters": [
+          {
+            "field": "eventType",
+            "operator": "eq",
+            "value": "Sensor Change",
+          },
+        ],
+        "limit": 3,
+        "skip": 17,
+      },
+      "reads": 41,
+    },
+  ],
+  "remainingBackfill": {
+    "days": [
+      {
+        "batches": 78,
+        "rows": 4936,
+      },
+      {
+        "batches": 79,
+        "rows": 5000,
+      },
+      {
+        "batches": 79,
+        "rows": 5000,
+      },
+      {
+        "batches": 79,
+        "rows": 5000,
+      },
+      {
+        "batches": 1,
+        "rows": 1,
+      },
+    ],
+    "reads": 41461,
+    "writes": 80064,
+  },
+  "treatments": 20001,
+}
+`;

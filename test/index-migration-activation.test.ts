@@ -133,7 +133,7 @@ describe("v29 index migration through actual EntryStore activation", () => {
       expect(retiredIndexes(sql)).toEqual([]);
       expect(preservedState(sql)).toBe(before);
       expect(entryStoreSchemaIsActivationReady(sql)).toBe(false);
-      expect(sql.exec<{ id: number }>("SELECT id FROM _sql_schema_migrations WHERE id >= 29 ORDER BY id").toArray()).toEqual([{ id: 29 }]);
+      expect(sql.exec<{ id: number }>("SELECT id FROM _sql_schema_migrations WHERE id >= 29 ORDER BY id").toArray()).toEqual([{ id: 29 }, { id: 31 }, { id: 33 }]);
 
       sql.exec("DROP TRIGGER fail_activation_seal");
       const retry = measuredInitialization(instance, sql);

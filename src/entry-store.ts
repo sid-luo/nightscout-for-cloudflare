@@ -2,10 +2,18 @@ import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storag
 import { resolveWebhook, type WebhookEnvironment } from "./webhook-delivery";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
 import { AuxiliaryQueryCache } from "./realtime/auxiliary-query-cache";
+import { BoundedWindowQueryCache } from "./realtime/bounded-window-query-cache";
 import { LegacyReadCache } from "./legacy-read-cache";
+import { TreatmentMembershipReadView, TREATMENT_MEMBERSHIP_VIEW_KEY } from "./treatment-membership-read-view";
+import { TREATMENT_ORDER_SOURCE_KEY } from "./treatment-order-read-view";
+import { LegacyDeviceStatusCandidateCache } from "./legacy-device-status-candidate-cache";
+import { LegacyDeviceStatusQuery } from "./legacy-device-status-query";
+import { DEVICE_STATUS_RECENT_READ_INDEX, migrateColdReadIndexesV33, hasDeviceStatusRecentReadIndex } from "./cold-read-indexes";
+import { initialize as initializeTreatmentReadSideIndex, advance as advanceTreatmentReadSideIndex, readState as treatmentReadSideState } from "./treatment-read-side-index";
 import { resolveHttpAuthorization, type HttpAuthorizationRequest } from "./http-authorization";
 import { RecentTreatmentQueryCache } from "./realtime/recent-treatment-query-cache";
 import { RealtimeEntryQueryCache } from "./realtime/entry-query-cache";
+import { projectRealtimeEntryRow } from "./realtime/entry-row-projection";
 import { DurableObject } from "cloudflare:workers";
 import { SqliteAdminNotifyRepository } from "./admin-notifies";
 import {
@@ -36,6 +44,8 @@ import {
   verifyJwt as validateJwt,
 } from "./jwt";
 import { permissionGroupsAllow } from "./permissions";
+import { isDiagnosticReadOperation, measureDiagnosticRead } from "./read-diagnostics";
+import { ProfileReadValidity } from "./profile-read-validity";
 import {
   documentReadSchemaIsCurrent,
   entriesShadowSchemaIsCurrent,
@@ -43,6 +53,8 @@ import {
   migrateDocumentsV4,
   migrateEffectiveModifiedV26,
   migrateDocumentWriteIndexesV29,
+  migrateDocumentReadIndexesV31,
+  TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL,
   DocumentQueryError,
   SqliteDocumentRepository,
   type Api3CollectionName,
@@ -238,7 +250,7 @@ type EntryStoreEnv = Env
   UUID_HANDLING?: string;
 };
 
-export const ENTRY_STORE_ACTIVATION_SEAL = 30;
+export const ENTRY_STORE_ACTIVATION_SEAL = 34;
 
 const ENTRY_STORE_REQUIRED_MIGRATIONS = [
   1,
@@ -266,6 +278,8 @@ const ENTRY_STORE_REQUIRED_MIGRATIONS = [
   26,
   27,
   29,
+  31,
+  33,
   ENTRY_STORE_ACTIVATION_SEAL,
 ] as const;
 
@@ -584,6 +598,30 @@ function realtimeSgvQuery(frame: boolean, limit: 64 | 1000): string {
        LIMIT ${limit}`;
 }
 
+function realtimeMbgQuery(frame: boolean, limit: 10 | 1000): string {
+  return `SELECT id, body, sort_time
+       FROM documents
+       WHERE collection = 'entries'
+         AND sort_time >= ?
+         ${frame ? "AND sort_time <= ?" : ""}
+         AND ${realtimeNumericMeasurementSql("$.mbg")}
+       ORDER BY sort_time DESC, id ASC
+       LIMIT ${limit}`;
+}
+
+function realtimeCalQuery(frame: boolean, limit: 10 | 1000): string {
+  return `SELECT id, body, sort_time
+       FROM documents
+       WHERE collection = 'entries'
+         AND sort_time >= ?
+         ${frame ? "AND sort_time <= ?" : ""}
+         AND json_extract(body, '$.type') = 'cal'
+         AND NOT ${realtimeJsonTruthySql("$.mbg")}
+         AND NOT ${realtimeJsonTruthySql("$.sgv")}
+       ORDER BY sort_time DESC, id ASC
+       LIMIT ${limit}`;
+}
+
 function documentSortTime(document: JsonDocument): number {
   for (const field of ["date", "mills", "created_at", "timestamp", "startDate"]) {
     const value = document[field];
@@ -803,8 +841,18 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private realtimeDeviceStatusQueries = new DeviceStatusQueryCache<DbDocument>();
   private deviceStatusCacheMutation = false;
   private readonly recentTreatmentQueries = new RecentTreatmentQueryCache<DbDocument>();
+  private readonly boundedTreatmentQueries = new BoundedWindowQueryCache<DbDocument>();
+  private treatmentCategoryIndexAvailable: boolean | undefined;
+  private treatmentReadIndexCooldownUntil = 0;
+  private auxiliaryTreatmentCold = true;
+  private auxiliaryTreatmentBulk: { allowLearning: boolean; learningStarted: boolean } | undefined;
   private readonly legacyDeviceStatusQueries = new LegacyReadCache();
-  private readonly legacyTreatmentQueries = new LegacyReadCache();
+  private legacyDeviceStatusCandidates = new LegacyDeviceStatusCandidateCache<DbDocument>();
+  private readonly legacyTreatmentQueries = new LegacyReadCache(
+    128, 4 * 1024 * 1024, 1024 * 1024,
+    [TREATMENT_MEMBERSHIP_VIEW_KEY, TREATMENT_ORDER_SOURCE_KEY],
+  );
+  private readonly profileReadValidity = new ProfileReadValidity(this.ctx.storage.sql, this.legacyTreatmentQueries);
   private activeProfileSwitchCache: { at: number; expiresAt: number; nextAt: number; value: string | null } | undefined;
   private readonly realtimeAuxiliaryQueries = {
     treatments: new AuxiliaryQueryCache<DbDocument>(),
@@ -836,41 +884,51 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       writeRoot: (request) => this.realtimeRootWrite(request),
     });
     ctx.blockConcurrencyWhile(async () => {
-      if (!entryStoreSchemaIsActivationReady(this.ctx.storage.sql)) {
-        this.storageSchemaInitializationPending = true;
-        try {
-          this.completeStorageInitialization();
-        } catch (error) {
-          if (
-            !isEntryStoreWriteQuotaError(error)
-            || !entryStoreSchemaSupportsCoreReadOnly(this.ctx.storage.sql)
-          ) {
-            throw error;
+      try {
+        if (!entryStoreSchemaIsActivationReady(this.ctx.storage.sql)) {
+          this.storageSchemaInitializationPending = true;
+          try {
+            this.completeStorageInitialization();
+          } catch (error) {
+            if (
+              !isEntryStoreWriteQuotaError(error)
+              || !entryStoreSchemaSupportsCoreReadOnly(this.ctx.storage.sql)
+            ) {
+              throw error;
+            }
+            this.realtimeAlarmRecoveryPending = true;
+            this.enterStorageWriteQuotaMode(error);
+            return;
           }
+        }
+        if (this.storageWritesBlocked()) return;
+        try {
+          this.reconcileRealtimeWebSocketSessions();
+          await this.synchronizeRealtimeAlarm();
+        } catch (error) {
+          if (!isEntryStoreWriteQuotaError(error)) throw error;
           this.realtimeAlarmRecoveryPending = true;
           this.enterStorageWriteQuotaMode(error);
-          return;
         }
-      }
-      if (this.storageWritesBlocked()) return;
-      try {
-        this.reconcileRealtimeWebSocketSessions();
-        await this.synchronizeRealtimeAlarm();
-      } catch (error) {
-        if (!isEntryStoreWriteQuotaError(error)) throw error;
-        this.realtimeAlarmRecoveryPending = true;
-        this.enterStorageWriteQuotaMode(error);
+      } finally {
+        // One zero-source marker after all constructor migration/recovery.
+        // Any later row-DML change declines this activation's proof.
+        this.profileReadValidity.initialize();
       }
     });
   }
 
   private completeStorageInitialization(): void {
     this.legacyDeviceStatusQueries.clear();
+    this.legacyDeviceStatusCandidates.clear();
     this.legacyTreatmentQueries.clear();
     this.realtimeEntryQueries.clear();
     this.realtimeDeviceStatusQueries.clear();
     for (const cache of Object.values(this.realtimeAuxiliaryQueries)) cache.clear();
     this.recentTreatmentQueries.clear();
+    this.boundedTreatmentQueries.clear();
+    this.auxiliaryTreatmentCold = true;
+    this.treatmentCategoryIndexAvailable = undefined;
     this.activeProfileSwitchCache = undefined;
     // This method is intentionally synchronous. A request cannot observe a
     // half-repaired schema between quota reset and the activation seal.
@@ -884,6 +942,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       );
     } catch (error) {
       this.storageSchemaInitializationPending = true;
+      // The migration transaction may have rolled its newly built indexes
+      // back. Read-only fallback must inspect the committed schema again.
+      this.treatmentCategoryIndexAvailable = undefined;
       throw error;
     }
   }
@@ -896,6 +957,27 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     migrateRealtimeOutboundIndexV29(this.ctx.storage);
     migrateDocumentWriteIndexesV29(this.ctx.storage.sql);
     this.ctx.storage.sql.exec("INSERT INTO _sql_schema_migrations (id) VALUES (29)");
+  }
+
+  private migrateReadIndexesV31(): void {
+    const applied = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT EXISTS(SELECT 1 FROM _sql_schema_migrations WHERE id = 31) AS present",
+    ).one().present !== 0;
+    if (applied) return;
+    // These are optional performance indexes. Large existing histories can
+    // defer their native, indivisible index build and keep the original read
+    // path. The marker records evaluation, not a promise that indexes exist.
+    this.treatmentCategoryIndexAvailable = migrateDocumentReadIndexesV31(this.ctx.storage.sql);
+    this.ctx.storage.sql.exec("INSERT INTO _sql_schema_migrations (id) VALUES (31)");
+  }
+
+  private migrateColdReadIndexesV33(): void {
+    const applied = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT EXISTS(SELECT 1 FROM _sql_schema_migrations WHERE id = 33) AS present",
+    ).one().present !== 0;
+    if (applied) return;
+    migrateColdReadIndexesV33(this.ctx.storage.sql);
+    this.ctx.storage.sql.exec("INSERT INTO _sql_schema_migrations (id) VALUES (33)");
   }
 
   private migrate(): void {
@@ -913,13 +995,16 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         )
         .one().version;
 
-      if (version >= 28 && sqliteMigrationMarkersPresent(this.ctx.storage.sql, [
-        ...ENTRY_STORE_REQUIRED_MIGRATIONS.filter((id) => id < 28), 28,
-      ])) {
-        // The previous activation seal proves the data/schema repairs already
-        // completed. This index-only upgrade must not scan or backfill history
-        // again, nor rebuild an unchanged persisted realtime snapshot.
+      const previouslySealed = [28, 30, 32, ENTRY_STORE_ACTIVATION_SEAL].some(seal =>
+        sqliteMigrationMarkersPresent(this.ctx.storage.sql, [seal]));
+      if (version >= 28 && previouslySealed && sqliteMigrationMarkersPresent(this.ctx.storage.sql,
+        ENTRY_STORE_REQUIRED_MIGRATIONS.filter((id) => id < 28))) {
+        // Earlier seals prove the data/schema repairs already completed. Only
+        // pending index migrations may visit their own bounded candidate set;
+        // do not backfill data or rebuild the unchanged realtime snapshot.
         this.migrateWriteIndexesV29();
+        this.migrateReadIndexesV31();
+        this.migrateColdReadIndexesV33();
         upgradedSealedSchema = true;
         return;
       }
@@ -1154,6 +1239,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       }
 
       this.migrateWriteIndexesV29();
+      this.migrateReadIndexesV31();
+      this.migrateColdReadIndexesV33();
 
       // This named, idempotent auth state is intentionally independent of the
       // numeric migration sequence. Delay-list state can safely repair itself
@@ -1931,7 +2018,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     return new SqliteDocumentRepository(
       this.ctx.storage,
       (event) => {
-        this.invalidateAuxiliaryQueries(event.collection);
+        this.invalidateAuxiliaryQueries(event.collection, true);
         if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
         if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
           this.realtimeDeviceStatusQueries.clear();
@@ -1939,7 +2026,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         try {
           this.realtime.recordApi3StorageMutationInTransaction(event);
         } finally {
-          this.invalidateAuxiliaryQueries(event.collection);
+          this.invalidateAuxiliaryQueries(event.collection, true);
           // A snapshot may have read uncommitted entries. Do not let those
           // values survive a later rollback of the caller's transaction.
           if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
@@ -1953,22 +2040,54 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         if (collection === "devicestatus") {
           this.updateDeviceStatusQueryCache(document);
         }
-        this.invalidateAuxiliaryQueries(collection);
+        this.invalidateAuxiliaryQueries(collection, true);
         try {
           this.recordDataMutationInTransaction(collection);
         } finally {
           // Notification settings may read uncommitted profile data here.
-          this.invalidateAuxiliaryQueries(collection);
+          this.invalidateAuxiliaryQueries(collection, true);
         }
+      },
+      this.legacyTreatmentQueries,
+      (collection, id, previousBody, nextBody) => {
+        if (collection !== "treatments") return undefined;
+        new TreatmentMembershipReadView(this.ctx.storage.sql, this.legacyTreatmentQueries)
+          .rememberMutation(id, previousBody, nextBody);
+        // A count upper bound is safe on both sides of rollback. Updates leave
+        // cardinality alone; failed creates may only make this bound looser.
+        const proof = this.legacyTreatmentQueries.get(TREATMENT_ORDER_SOURCE_KEY);
+        if (proof !== undefined && previousBody === undefined && nextBody !== undefined) {
+          const count = Number(proof);
+          if (Number.isSafeInteger(count) && count >= 0) {
+            if (!this.legacyTreatmentQueries.set(TREATMENT_ORDER_SOURCE_KEY, String(count + 1))) {
+              // A custom smaller budget must never retain an underestimated
+              // proof after a failed replacement. Losing history is handled
+              // conservatively by the membership activation safety guard.
+              this.legacyTreatmentQueries.clear();
+            }
+          }
+        }
+        this.clearTreatmentQueryResults();
+        return () => this.clearTreatmentQueryResults();
       },
     );
   }
 
-  private invalidateAuxiliaryQueries(collection: string): void {
-    if (collection === "devicestatus") this.legacyDeviceStatusQueries.clear();
+  private clearTreatmentQueryResults(): void {
+    this.legacyTreatmentQueries.clearKeeping([TREATMENT_MEMBERSHIP_VIEW_KEY, TREATMENT_ORDER_SOURCE_KEY]);
+  }
+
+  private invalidateAuxiliaryQueries(collection: string, preserveTreatmentViews = false): void {
+    if (collection === "devicestatus") {
+      this.legacyDeviceStatusQueries.clear();
+      if (!this.deviceStatusCacheMutation) this.legacyDeviceStatusCandidates.clear();
+    }
     if (collection === "treatments") {
-      this.legacyTreatmentQueries.clear();
+      this.auxiliaryTreatmentCold = true;
+      if (preserveTreatmentViews) this.clearTreatmentQueryResults();
+      else this.legacyTreatmentQueries.clear();
       this.recentTreatmentQueries.clear();
+      this.boundedTreatmentQueries.clear();
       this.activeProfileSwitchCache = undefined;
     }
     if (collection === "treatments" || collection === "profile" || collection === "food") {
@@ -1978,9 +2097,55 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
 
   /** Cache raw loader prefixes, never normalized/budgeted snapshots. */
   private cachedAuxiliaryRows(statement: string, bindings: SqlStorageValue[]): Iterable<DbDocument> {
-    const load = () => this.ctx.storage.sql.exec<DbDocument>(statement, ...bindings);
+    const categoryComparison = `${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = `;
+    const category = statement.includes(`${categoryComparison}'Profile Switch'`) ? "Profile Switch"
+      : statement.includes(`${categoryComparison}?`) && typeof bindings[0] === "string" ? bindings[0] : undefined;
+    if (category !== undefined && statement.includes("collection = 'treatments'")
+      && statement.includes("json_valid(body)") && statement.includes("json_type(body, '$.eventType') = 'text'")) {
+      // A prior actual category read can have filled only some windows. Do not
+      // move learning ahead of later windows which may already be cached.
+      this.auxiliaryTreatmentCold = false;
+    }
+    const load = () => {
+      let indexed = statement.includes("collection = 'treatments'")
+        && statement.includes("json_valid(body)")
+        && statement.includes("json_type(body, '$.eventType') = 'text'")
+        ? this.treatmentEventQuerySql(statement) : statement;
+      if (/ORDER BY sort_time DESC, updated_at DESC, id ASC\s+LIMIT (?:1|1000)\b/.test(indexed)
+        && /FROM documents\s+WHERE collection = 'treatments'/.test(indexed)
+        && this.ctx.storage.sql.exec("PRAGMA index_info(documents_collection_sort)").toArray().length > 0) {
+        // The API3 srv_modified index has a different secondary order. Keep
+        // these internal updated_at windows on their original measured path.
+        indexed = indexed.replace(/FROM documents\s+WHERE collection = 'treatments'/,
+          "FROM documents INDEXED BY documents_collection_sort WHERE collection = 'treatments'");
+      }
+      if (category !== undefined && statement.includes("json_valid(body)")
+        && statement.includes("json_type(body, '$.eventType') = 'text'")
+        && /FROM documents(?: INDEXED BY documents_collection_sort)?\s+WHERE collection = 'treatments'/.test(indexed)) {
+        return this.sharedTreatmentEventRows(indexed, bindings, category);
+      }
+      return this.ctx.storage.sql.exec<DbDocument>(indexed, ...bindings);
+    };
     const collection = /collection = '(treatments|profile|food)'/.exec(statement)?.[1];
     if (collection !== "treatments" && collection !== "profile" && collection !== "food") return load();
+    if (collection === "treatments" && statement.includes("sort_time >= ?")
+      && statement.includes("sort_time <= ?")
+      && /ORDER BY sort_time DESC, updated_at DESC, id ASC\s+LIMIT (?:1|1000)\b/.test(statement)
+      && !statement.includes("OFFSET")) {
+      const lower = bindings.at(-2), upper = bindings.at(-1);
+      if (typeof lower === "number" && typeof upper === "number") {
+        // Reuse complete latest-N prefixes while time moves forward, until the
+        // first future treatment can enter. A moving lower bound can only
+        // remove older rows; every treatment mutation invalidates the cache.
+        return this.boundedTreatmentQueries.read(
+          JSON.stringify([statement, bindings.slice(0, -2)]), lower, upper, load,
+          () => this.ctx.storage.sql.exec<{ sort_time: number }>(
+            `SELECT sort_time FROM documents WHERE collection = 'treatments'
+             AND sort_time > ? ORDER BY sort_time ASC LIMIT 1`, upper,
+          ).toArray()[0]?.sort_time ?? Number.POSITIVE_INFINITY,
+        );
+      }
+    }
     if (collection === "treatments" && statement.includes("updated_at >= ?") &&
       statement.includes("ORDER BY updated_at ASC, id ASC") && statement.includes("LIMIT 100") &&
       bindings.length === 1 && typeof bindings[0] === "number") {
@@ -1996,6 +2161,105 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     if (typeof lower !== "number") return load();
     const key = JSON.stringify([statement, timed ? bindings.slice(0, -1) : bindings]);
     return this.realtimeAuxiliaryQueries[collection].read(key, lower, load);
+  }
+
+  /** Deferred schemas share the existing complete necessary membership view. */
+  private *sharedTreatmentEventRows(
+    statement: string, bindings: SqlStorageValue[], category: string,
+  ): IterableIterator<DbDocument> {
+    this.auxiliaryTreatmentCold = false;
+    const membership = new TreatmentMembershipReadView(this.ctx.storage.sql, this.legacyTreatmentQueries);
+    const bulk = this.auxiliaryTreatmentBulk;
+    const ids = bulk?.learningStarted === true
+      ? membership.peekCandidates(category) : membership.candidates(category);
+    if (ids !== undefined) {
+      if (ids.length === 0) return;
+      // The superset also includes arrays, stale members and rolled-back writes.
+      // Keep the entire original text/time/JSON predicate and native ordering;
+      // LIMIT -1 prevents flattening this bounded PK source into a broad scan.
+      const selected = statement.replace(
+        /FROM documents(?: INDEXED BY documents_collection_sort)?\s+WHERE/,
+        `FROM (SELECT * FROM documents WHERE collection = 'treatments'
+          AND id IN (SELECT value FROM json_each(?)) LIMIT -1) WHERE`,
+      );
+      yield* this.ctx.storage.sql.exec<DbDocument>(selected, JSON.stringify(ids), ...bindings);
+      return;
+    }
+    const cursor = this.ctx.storage.sql.exec<DbDocument>(statement, ...bindings);
+    yield* cursor;
+    // An output-budget stop or SQL failure does not learn from an unfinished
+    // read. Uploads retain only the existing monotone membership history.
+    membership.noteExpensiveRead(cursor.rowsRead);
+    if (bulk?.allowLearning === true && !bulk.learningStarted && cursor.rowsRead > 512) {
+      const position = category === "Profile Switch" ? -1
+        : (AGE_TREATMENT_EVENT_TYPES as readonly string[]).indexOf(category);
+      if (category !== "Profile Switch" && position < 0) return;
+      // The bulk reader already needs the remaining fixed age inputs. Move
+      // their existing bounded learning turns ahead of their broad fallback
+      // queries, at most six per synchronous scope. Partial/unsafe views still
+      // fall back; no filtered category cursor becomes a complete proof.
+      bulk.learningStarted = true;
+      for (let index = position + 1; index < AGE_TREATMENT_EVENT_TYPES.length; index++) {
+        membership.candidates(AGE_TREATMENT_EVENT_TYPES[index]!);
+      }
+    }
+  }
+
+  private withAuxiliaryTreatmentBulk<T>(read: () => T): T {
+    const previous = this.auxiliaryTreatmentBulk;
+    if (previous !== undefined) previous.allowLearning = false;
+    this.auxiliaryTreatmentBulk = { allowLearning: previous === undefined && this.auxiliaryTreatmentCold, learningStarted: false };
+    try { return read(); }
+    finally { this.auxiliaryTreatmentBulk = previous; }
+  }
+
+  private treatmentEventQuerySource(): string {
+    if (this.treatmentCategoryIndexAvailable === undefined) {
+      this.treatmentCategoryIndexAvailable = this.ctx.storage.sql.exec(
+        "PRAGMA index_info(documents_treatments_event_type_created_at)",
+      ).toArray().length === 5;
+    }
+    // Measured SQLite plans otherwise prefer the broad time index even for an
+    // absent event category. Force only this proven eligible raw-text path,
+    // and keep older/deferred schemas fully usable without the optional index.
+    if (this.treatmentCategoryIndexAvailable) return "documents INDEXED BY documents_treatments_event_type_created_at";
+    if (treatmentReadSideState(this.ctx.storage.sql)?.complete === true) {
+      return `treatment_read_side_keys INDEXED BY treatment_read_side_category CROSS JOIN documents
+        ON documents.collection = 'treatments' AND documents.id = read_document_id`;
+    }
+    return "documents";
+  }
+
+  private treatmentEventQuerySql(statement: string): string {
+    const source = this.treatmentEventQuerySource();
+    let result = statement.replace(/FROM documents\s+WHERE/, `FROM ${source} WHERE`);
+    if (source.startsWith("treatment_read_side_keys")) {
+      result = result.replaceAll(TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL, "read_event_value")
+        .replaceAll("json_type(body, '$.eventType')", "read_event_type");
+    }
+    return result;
+  }
+
+  /** Optional work runs at public reads and existing alarm turns, outside canonical transactions. */
+  private advanceTreatmentReadIndex(): void {
+    const now = Date.now();
+    if (now < this.treatmentReadIndexCooldownUntil || this.storageSchemaInitializationPending
+      || now < this.storageWriteQuotaBlockedUntil) return;
+    try {
+      if (treatmentReadSideState(this.ctx.storage.sql) === null) {
+        // Earlier local read-schema seals may have recorded native-index
+        // deferral before progressive indexes existed. Repair with empty DDL
+        // only; complete native schemas make initialize a read-only no-op.
+        this.ctx.storage.transactionSync(() => initializeTreatmentReadSideIndex(this.ctx.storage.sql));
+      }
+      advanceTreatmentReadSideIndex(this.ctx.storage, now);
+    } catch (error) {
+      if (!isDurableObjectWriteQuotaError(error)) throw error;
+      // An optional index batch must not turn working read-only access into a
+      // write-quota error. Its transaction has rolled back; canonical writes
+      // still report their own failures through the ordinary write gate.
+      this.treatmentReadIndexCooldownUntil = durableObjectWriteQuotaResetAt(now);
+    }
   }
 
   private updateEntryQueryCache(document?: JsonDocument): void {
@@ -2022,9 +2286,10 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       if (!query.includes(where)) return null;
       // Preserve SQLite's numeric/boolean/string predicates exactly. Adding
       // the canonical primary key bounds this to one row, not the time window.
-      return this.ctx.storage.sql.exec<DbDocument>(
+      const row = this.ctx.storage.sql.exec<DbDocument>(
         query.replace(where, `${where} AND id = ?`), canonicalId, lower,
       ).toArray()[0];
+      return row === undefined ? undefined : projectRealtimeEntryRow(row);
     });
   }
 
@@ -2047,28 +2312,37 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private updateDeviceStatusQueryCache(document?: JsonDocument): void {
     if (!this.deviceStatusCacheMutation || document === undefined) {
       this.realtimeDeviceStatusQueries.clear();
+      this.legacyDeviceStatusCandidates.clear();
       return;
     }
-    if (!this.realtimeDeviceStatusQueries.ready) return;
+    if (!this.realtimeDeviceStatusQueries.ready && !this.legacyDeviceStatusCandidates.ready) return;
     // Prefer the canonical storage id supplied by legacy writes. API3 may
     // supply only its public identifier; resolve that without scanning history.
     const id = document._id;
     const identity = document.identifier;
     if (typeof id !== "string" && typeof identity !== "string") {
       this.realtimeDeviceStatusQueries.clear();
+      this.legacyDeviceStatusCandidates.clear();
       return;
     }
+    const fields = this.legacyDeviceStatusCandidates.ready
+      ? this.legacyDeviceStatusReadSelection().fields : "id, body, sort_time, updated_at";
     const rows = typeof id === "string"
       ? this.ctx.storage.sql.exec<DbDocument>(
-        `SELECT id, body, sort_time, updated_at FROM documents
+        `SELECT ${fields} FROM documents
          WHERE collection = 'devicestatus' AND id = ? LIMIT 2`, id,
       ).toArray()
       : this.ctx.storage.sql.exec<DbDocument>(
-        `SELECT id, body, sort_time, updated_at FROM documents
+        `SELECT ${fields} FROM documents
          WHERE collection = 'devicestatus' AND identifier = ? LIMIT 2`, identity as string,
       ).toArray();
-    if (rows.length !== 1) this.realtimeDeviceStatusQueries.clear();
-    else this.realtimeDeviceStatusQueries.upsert(rows[0]!);
+    if (rows.length !== 1) {
+      this.realtimeDeviceStatusQueries.clear();
+      this.legacyDeviceStatusCandidates.clear();
+    } else {
+      this.realtimeDeviceStatusQueries.upsert(rows[0]!);
+      this.legacyDeviceStatusCandidates.upsert(rows[0]!);
+    }
   }
 
   private withDeviceStatusCacheMutation<T>(collection: string, operation: () => T): T {
@@ -2076,15 +2350,20 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     // Repository operations are synchronous and own their SQLite transaction.
     // Only publish the fork after that transaction returns successfully.
     const committed = this.realtimeDeviceStatusQueries;
+    const committedCandidates = this.legacyDeviceStatusCandidates;
+    const previousMutation = this.deviceStatusCacheMutation;
     this.realtimeDeviceStatusQueries = committed.fork();
+    this.legacyDeviceStatusCandidates = committedCandidates.fork();
     this.deviceStatusCacheMutation = true;
     try {
       return operation();
     } catch (error) {
       this.realtimeDeviceStatusQueries = committed;
+      this.legacyDeviceStatusCandidates = committedCandidates;
+      this.legacyDeviceStatusQueries.clear();
       throw error;
     } finally {
-      this.deviceStatusCacheMutation = false;
+      this.deviceStatusCacheMutation = previousMutation;
     }
   }
 
@@ -2432,7 +2711,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           `SELECT id, body, sort_time
            FROM documents
            WHERE collection = 'treatments'
-             AND json_extract(body, '$.eventType') = ?
+             AND json_valid(body)
+             AND json_type(body, '$.eventType') = 'text'
+             AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = ?
              AND sort_time >= ?
              AND sort_time <= ?
            ORDER BY sort_time DESC, updated_at DESC, id ASC
@@ -2445,7 +2726,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           `SELECT id, body, sort_time
            FROM documents
            WHERE collection = 'treatments'
-             AND json_extract(body, '$.eventType') = ?
+             AND json_valid(body)
+             AND json_type(body, '$.eventType') = 'text'
+             AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = ?
              AND sort_time > ?
            ORDER BY sort_time ASC, updated_at DESC, id ASC
            LIMIT 1`,
@@ -3086,21 +3369,23 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       return cached.value;
     }
     const predicate = `collection = 'treatments'
-         AND json_extract(body, '$.eventType') = 'Profile Switch'
+         AND json_valid(body)
+         AND json_type(body, '$.eventType') = 'text'
+         AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = 'Profile Switch'
          AND json_type(body, '$.duration') IN ('integer', 'real')
          AND CAST(json_extract(body, '$.duration') AS REAL) = 0`;
     const row = this.ctx.storage.sql.exec<{ profile: SqlStorageValue; sort_time: number }>(
-      `SELECT json_extract(body, '$.profile') AS profile, sort_time
+      this.treatmentEventQuerySql(`SELECT json_extract(body, '$.profile') AS profile, sort_time
        FROM documents WHERE ${predicate}
          AND sort_time >= ? AND sort_time <= ?
-       ORDER BY sort_time DESC, updated_at DESC, id ASC LIMIT 1`,
+       ORDER BY sort_time DESC, updated_at DESC, id ASC LIMIT 1`),
       now - PROFILE_SWITCH_WINDOW_MS, now,
     ).toArray()[0];
     // A future switch can become active without any write. Cache only until
     // that exact boundary (or the current row's one-year window expires).
     const nextAt = this.ctx.storage.sql.exec<{ sort_time: number }>(
-      `SELECT sort_time FROM documents WHERE ${predicate} AND sort_time > ?
-       ORDER BY sort_time ASC LIMIT 1`, now,
+      this.treatmentEventQuerySql(`SELECT sort_time FROM documents WHERE ${predicate} AND sort_time > ?
+       ORDER BY sort_time ASC LIMIT 1`), now,
     ).toArray()[0]?.sort_time ?? Number.POSITIVE_INFINITY;
     const value = typeof row?.profile === "string" && row.profile.length > 0 ? row.profile : null;
     this.activeProfileSwitchCache = {
@@ -3117,16 +3402,18 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       profile: SqlStorageValue;
       sort_time: SqlStorageValue;
     }>(
-      `SELECT json_extract(body, '$.profile') AS profile, sort_time
+      this.treatmentEventQuerySql(`SELECT json_extract(body, '$.profile') AS profile, sort_time
        FROM documents
        WHERE collection = 'treatments'
-         AND json_extract(body, '$.eventType') = 'Profile Switch'
+         AND json_valid(body)
+         AND json_type(body, '$.eventType') = 'text'
+         AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = 'Profile Switch'
          AND json_type(body, '$.duration') IN ('integer', 'real')
          AND CAST(json_extract(body, '$.duration') AS REAL) = 0
          AND sort_time >= ?
          ${upperClause}
        ORDER BY sort_time DESC, updated_at DESC, id ASC
-       LIMIT 1`,
+       LIMIT 1`),
       ...(frame
         ? [at - PROFILE_SWITCH_WINDOW_MS, at]
         : [at - PROFILE_SWITCH_WINDOW_MS]),
@@ -3147,20 +3434,35 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     ));
   }
 
-  private cachedRealtimeEntries(now: number, frame: boolean, sql: string): Iterable<DbDocument> {
+  private cachedRealtimeEntries(now: number, frame: boolean, sql: string, limit = 1000): Iterable<DbDocument> {
     const lower = now - REALTIME_ENTRY_WINDOW_MS;
-    return this.realtimeEntryQueries.read(sql, lower, frame, () =>
-      this.ctx.storage.sql.exec<DbDocument>(sql, ...(frame ? [lower, now] : [lower])),
-      1000,
-    );
+    const load = () => this.ctx.storage.sql.exec<DbDocument>(sql, ...(frame ? [lower, now] : [lower]));
+    // These internal loaders build fixed SGV/MBG/CAL objects. Selection and
+    // point updates still query the complete stored body; only the reusable
+    // representation omits fields those consumers never read. Historical
+    // frames remain uncached and consume their original raw cursor.
+    return this.realtimeEntryQueries.read(sql, lower, frame, frame ? load : function* () {
+      for (const row of load()) yield projectRealtimeEntryRow(row);
+    }, limit);
   }
 
   private cachedRecentSgvRows(now: number): Iterable<DbDocument> {
     const lower = now - REALTIME_ENTRY_WINDOW_MS;
-    // Reuse only a complete, compatible root query. A cold properties or
-    // notification read must not fill the 1000-row cache with just 64 rows.
+    // Reuse a complete root prefix or cache this distinct, smaller SQL query.
+    // Its own LIMIT remains part of the key and mutation capacity, so a cold
+    // property read cannot narrow the root's 1,000-row answer.
     return this.realtimeEntryQueries.peek(realtimeSgvQuery(false, 1000), lower, 64)
-      ?? this.ctx.storage.sql.exec<DbDocument>(realtimeSgvQuery(false, 64), lower);
+      ?? this.cachedRealtimeEntries(now, false, realtimeSgvQuery(false, 64), 64);
+  }
+
+  private cachedRecentMbgRows(now: number): Iterable<DbDocument> {
+    return this.realtimeEntryQueries.peek(realtimeMbgQuery(false, 1000), now - REALTIME_ENTRY_WINDOW_MS, 10)
+      ?? this.cachedRealtimeEntries(now, false, realtimeMbgQuery(false, 10), 10);
+  }
+
+  private cachedRecentCalRows(now: number): Iterable<DbDocument> {
+    return this.realtimeEntryQueries.peek(realtimeCalQuery(false, 1000), now - REALTIME_ENTRY_WINDOW_MS, 10)
+      ?? this.cachedRealtimeEntries(now, false, realtimeCalQuery(false, 10), 10);
   }
 
   private realtimeSnapshot(
@@ -3185,7 +3487,6 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     // shared serialized output budget is exhausted; no large result is
     // materialized with toArray() before accounting.
     let budget = new RealtimeJsonBudget(snapshot);
-    const entryUpperClause = frame ? "AND sort_time <= ?" : "";
     for (const row of this.cachedRealtimeEntries(now, frame, realtimeSgvQuery(frame, 1000))) {
       const entry = toPublicEntry(toDocument(row));
       const raw = entry as PublicEntry & Record<string, unknown>;
@@ -3243,18 +3544,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       snapshot.sgvs.length + snapshot.profiles.length + snapshot.devicestatus.length,
     );
 
-    for (const row of this.cachedRealtimeEntries(now, frame,
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         ${entryUpperClause}
-         AND json_extract(body, '$.type') = 'cal'
-         AND NOT ${realtimeJsonTruthySql("$.mbg")}
-         AND NOT ${realtimeJsonTruthySql("$.sgv")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 1000`,
-    )) {
+    for (const row of this.cachedRealtimeEntries(now, frame, realtimeCalQuery(frame, 1000))) {
       const entry = toPublicEntry(toDocument(row)) as PublicEntry & Record<string, unknown>;
       if (entry.mbg || entry.sgv) continue;
       const calibration = {
@@ -3270,16 +3560,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     }
     snapshot.cals.reverse();
 
-    for (const row of this.cachedRealtimeEntries(now, frame,
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         ${entryUpperClause}
-         AND ${realtimeNumericMeasurementSql("$.mbg")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 1000`,
-    )) {
+    for (const row of this.cachedRealtimeEntries(now, frame, realtimeMbgQuery(frame, 1000))) {
       const entry = toPublicEntry(toDocument(row));
       const mgdl = realtimeMeasurement(entry.mbg);
       if (mgdl === null) continue;
@@ -3315,6 +3596,15 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
    * Current loads intentionally have no upper bound; explicit frames do.
    */
   private realtimeLoadedTreatments(
+    now: number,
+    frame: boolean,
+    budget: RealtimeJsonBudget,
+    snapshot: RealtimeSnapshot,
+  ): RealtimeDocument[] {
+    return this.withAuxiliaryTreatmentBulk(() => this.realtimeLoadedTreatmentsInBulk(now, frame, budget, snapshot));
+  }
+
+  private realtimeLoadedTreatmentsInBulk(
     now: number,
     frame: boolean,
     budget: RealtimeJsonBudget,
@@ -3387,7 +3677,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       `SELECT id, body, sort_time
        FROM documents
        WHERE collection = 'treatments'
-         AND json_extract(body, '$.eventType') = 'Profile Switch'
+         AND json_valid(body)
+         AND json_type(body, '$.eventType') = 'text'
+         AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = 'Profile Switch'
          AND json_type(body, '$.duration') IN ('integer', 'real')
          AND CAST(json_extract(body, '$.duration') AS REAL) = 0
          AND sort_time >= ?
@@ -3404,7 +3696,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         `SELECT id, body, sort_time
          FROM documents
          WHERE collection = 'treatments'
-           AND json_extract(body, '$.eventType') = ?
+           AND json_valid(body)
+           AND json_type(body, '$.eventType') = 'text'
+           AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = ?
            AND sort_time >= ?
            ${upperClause}
          ORDER BY sort_time DESC, updated_at DESC, id ASC
@@ -3427,6 +3721,10 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
    * every property poll. This adapter loads only the bounded plugin inputs.
    */
   private pluginPropertyContext(now: number): PluginPropertyContext {
+    return this.withAuxiliaryTreatmentBulk(() => this.pluginPropertyContextInBulk(now));
+  }
+
+  private pluginPropertyContextInBulk(now: number): PluginPropertyContext {
     const context: PluginPropertyContext = {
       sgvs: [],
       mbgs: [],
@@ -3462,16 +3760,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     context.sgvs.reverse();
     budget = new RealtimeJsonBudget(context, context.sgvs.length);
 
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         AND ${realtimeNumericMeasurementSql("$.mbg")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 10`,
-      now - REALTIME_ENTRY_WINDOW_MS,
-    )) {
+    for (const row of this.cachedRecentMbgRows(now)) {
       const entry = toPublicEntry(toDocument(row));
       const raw = entry as PublicEntry & Record<string, unknown>;
       const mgdl = realtimeMeasurement(raw.mbg);
@@ -3492,18 +3781,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       context.sgvs.length + context.mbgs.length,
     );
 
-    for (const row of this.ctx.storage.sql.exec<DbDocument>(
-      `SELECT id, body, sort_time
-       FROM documents
-       WHERE collection = 'entries'
-         AND sort_time >= ?
-         AND json_extract(body, '$.type') = 'cal'
-         AND NOT ${realtimeJsonTruthySql("$.mbg")}
-         AND NOT ${realtimeJsonTruthySql("$.sgv")}
-       ORDER BY sort_time DESC, id ASC
-       LIMIT 10`,
-      now - REALTIME_ENTRY_WINDOW_MS,
-    )) {
+    for (const row of this.cachedRecentCalRows(now)) {
       const entry = toPublicEntry(toDocument(row)) as PublicEntry & Record<string, unknown>;
       if (entry.mbg || entry.sgv) continue;
       const calibration = {
@@ -3568,7 +3846,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       `SELECT id, body, sort_time
        FROM documents
        WHERE collection = 'treatments'
-         AND json_extract(body, '$.eventType') = 'Profile Switch'
+         AND json_valid(body)
+         AND json_type(body, '$.eventType') = 'text'
+         AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = 'Profile Switch'
          AND json_type(body, '$.duration') IN ('integer', 'real')
          AND CAST(json_extract(body, '$.duration') AS REAL) = 0
          AND sort_time >= ?
@@ -3587,7 +3867,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         `SELECT id, body, sort_time
          FROM documents
          WHERE collection = 'treatments'
-           AND json_extract(body, '$.eventType') = ?
+           AND json_valid(body)
+           AND json_type(body, '$.eventType') = 'text'
+           AND ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL} = ?
            AND sort_time >= ?
            AND sort_time <= ?
          ORDER BY sort_time DESC, updated_at DESC, id ASC
@@ -4413,6 +4695,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       await this.processDueBackgroundTasks(now);
       if (this.storageWritesBlocked()) throw new DurableObjectWriteQuotaError();
       this.flushRealtimeWebSockets();
+      this.advanceTreatmentReadIndex();
       await this.synchronizeRealtimeAlarm();
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error)) {
@@ -4641,6 +4924,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
 
   async getDdataSnapshotJson(at: number, frame: boolean): Promise<string> {
     if (!Number.isFinite(at)) throw new Error("invalid ddata frame time");
+    this.advanceTreatmentReadIndex();
     const timestamp = Math.trunc(at);
     const snapshot = this.realtimeSnapshot(timestamp, frame, "ddata");
     const result: FullRealtimeDdataSnapshot = {
@@ -4728,6 +5012,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
 
   async getPluginPropertyContextJson(at: number): Promise<string> {
     if (!Number.isFinite(at)) throw new Error("invalid property context time");
+    this.advanceTreatmentReadIndex();
     return JSON.stringify(this.pluginPropertyContext(Math.trunc(at)));
   }
 
@@ -4775,21 +5060,95 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     return deleted;
   }
 
+  private legacyDeviceStatusReadSelection(): { fields: string; source: string } {
+    return hasDeviceStatusRecentReadIndex(this.ctx.storage.sql)
+      ? { fields: "rowid AS storage_order, id, body, sort_time, updated_at",
+        source: `documents INDEXED BY ${DEVICE_STATUS_RECENT_READ_INDEX}` }
+      : { fields: "id, body, sort_time, updated_at", source: "documents" };
+  }
+
+  async getLegacyDeviceStatusQueryJson(search: string): Promise<string> {
+    const query = new LegacyDeviceStatusQuery(search);
+    if (query.isSimple) return this.getLegacyDeviceStatusJson(query.count);
+    const load = () => {
+      const { fields, source } = this.legacyDeviceStatusReadSelection();
+      return this.ctx.storage.sql.exec<DbDocument>(
+        `SELECT ${fields} FROM ${source} WHERE collection = 'devicestatus'
+         ORDER BY sort_time DESC, updated_at DESC LIMIT 5000`,
+      );
+    };
+    const raw = this.legacyDeviceStatusCandidates.peekRows(5000);
+    if (raw !== undefined) return JSON.stringify(query.selectCandidateRows(raw).map(toDocument));
+    const projected = this.legacyDeviceStatusCandidates.peekProjectedRows(query.projectionFields, 5000);
+    if (projected === undefined) {
+      // Collect only the referenced field subtrees, but evaluate the cold
+      // cursor's original bodies. Recent unsorted filters retain their lazy
+      // LIMIT behavior and selected cold rows need no second point lookup.
+      const selected = query.selectCandidateRows(this.legacyDeviceStatusCandidates.readProjected(
+        query.projectionFields, 5000, load, true,
+      ));
+      return JSON.stringify(selected.map(toDocument));
+    }
+    const selected = query.selectCandidateRows(projected);
+    const bodies = new Map<string, DbDocument>();
+    // The cached fields determine selection only. Return each complete current
+    // canonical body, in the unchanged JavaScript comparator's selected order.
+    // Synchronous SQL keeps selection and body retrieval in one DO snapshot.
+    for (let offset = 0; offset < selected.length; offset += 90) {
+      const ids = selected.slice(offset, offset + 90).map(row => row.id);
+      for (const row of this.ctx.storage.sql.exec<DbDocument>(
+        `SELECT id, body, sort_time, updated_at FROM documents
+         WHERE collection = 'devicestatus' AND id IN (${ids.map(() => "?").join(",")})`, ...ids,
+      )) bodies.set(row.id, row);
+    }
+    return JSON.stringify(selected.map(row => {
+      const canonical = bodies.get(row.id);
+      if (canonical === undefined) throw new Error("cached device status candidate is missing its canonical body");
+      return toDocument(canonical);
+    }));
+  }
+
   async getLegacyDeviceStatusJson(limit: number): Promise<string> {
     const boundedLimit = Math.max(1, Math.min(5000, Math.trunc(limit)));
     return this.legacyDeviceStatusQueries.read(String(boundedLimit), () => {
       // Match listDocuments exactly, including soft-deleted records and ties.
       // Generic legacy filters still run against the original 5,000-row prefix.
-      const documents = this.ctx.storage.sql.exec<DbDocument>(
-        `SELECT id, body, sort_time FROM documents WHERE collection = ?
-         ORDER BY sort_time DESC, updated_at DESC LIMIT ?`,
-        "devicestatus", boundedLimit,
-      ).toArray().map(toDocument);
+      const documents = this.legacyDeviceStatusCandidates.read(boundedLimit, () => {
+        const { fields, source } = this.legacyDeviceStatusReadSelection();
+        return this.ctx.storage.sql.exec<DbDocument>(
+          `SELECT ${fields} FROM ${source} WHERE collection = 'devicestatus'
+           ORDER BY sort_time DESC, updated_at DESC LIMIT ?`, boundedLimit,
+        ).toArray();
+      }).map(toDocument);
       return JSON.stringify(documents);
     });
   }
 
+  async diagnosticRead(operation: string, args: unknown[], traceId: string) {
+    if (!isDiagnosticReadOperation(operation)) throw new Error("Unsupported diagnostic read operation");
+    const reader = (this as unknown as Record<string, (...args: unknown[]) => unknown>)[operation]!;
+    return measureDiagnosticRead(this.ctx.storage.sql, operation, () => Reflect.apply(reader, this, args), traceId);
+  }
+
+  async getLegacyProfileCurrentJson(): Promise<string> {
+    const current = this.profileReadValidity.withCurrentRead(() => {
+      // Whole-collection native+JS validity makes CASE equivalent to the
+      // existing partial-index expression, without dropping any old error.
+      const row = this.ctx.storage.sql.exec<DbDocument>(`SELECT id, body, sort_time FROM documents
+        WHERE collection='profile' AND json_valid(body)
+        ORDER BY json_extract(body, '$.startDate') DESC, id DESC LIMIT 1`).toArray()[0];
+      const value = row === undefined ? null : toDocument(row);
+      return JSON.stringify(value ?? null);
+    });
+    if (current !== undefined) return current.value;
+    // A partial or unsupported proof retains the entire old 5,000-row parse
+    // and its exact error behavior before selecting current.
+    const documents = JSON.parse(await this.listDocuments("profile")) as JsonDocument[];
+    return JSON.stringify(documents[0] ?? null);
+  }
+
   async listDocuments(collection: DocumentCollection, limit = 5000): Promise<string> {
+    if (collection === "treatments") this.advanceTreatmentReadIndex();
     if (collection === "subjects") return await this.listAuthorizationSubjects() ?? "[]";
     const boundedLimit = Math.max(1, Math.min(10000, Math.trunc(limit)));
     if (collection === "treatments") {
@@ -5014,7 +5373,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     if (collection === "devicestatus") {
       const result = JSON.stringify(
         documents.map((document) =>
-          this.documentRepository().saveLegacyDocument(collection, document).document),
+          this.withDeviceStatusCacheMutation(collection, () =>
+            this.documentRepository().saveLegacyDocument(collection, document)).document),
       );
       await this.publishRootDataUpdate();
       return result;
@@ -5260,12 +5620,15 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     collection: Api3CollectionName,
     queryJson = "{}",
   ): Promise<string> {
+    if (collection === "treatments") this.advanceTreatmentReadIndex();
     try {
       const query = JSON.parse(queryJson) as DocumentQuery;
-      return JSON.stringify({
+      const load = () => JSON.stringify({
         ok: true,
         result: this.documentRepository().queryDocumentsForApi3(collection, query),
       });
+      return collection === "treatments"
+        ? this.legacyTreatmentQueries.read(`api3:${JSON.stringify(query)}`, load) : load();
     } catch (error) {
       if (isDurableObjectReadQuotaError(error)) throw error;
       return JSON.stringify({
@@ -5317,12 +5680,13 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.withEntryCacheMutation(collection, () => this.documentRepository().replaceDocumentForApi3(
-          collection,
-          identity,
-          document,
-          options,
-        )),
+        this.withEntryCacheMutation(collection, () =>
+          this.withDeviceStatusCacheMutation(collection, () => this.documentRepository().replaceDocumentForApi3(
+            collection,
+            identity,
+            document,
+            options,
+          ))),
       );
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
@@ -5348,12 +5712,13 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     let result: string;
     try {
       result = JSON.stringify(
-        this.withEntryCacheMutation(collection, () => this.documentRepository().patchDocumentForApi3(
-          collection,
-          identity,
-          patch,
-          options,
-        )),
+        this.withEntryCacheMutation(collection, () =>
+          this.withDeviceStatusCacheMutation(collection, () => this.documentRepository().patchDocumentForApi3(
+            collection,
+            identity,
+            patch,
+            options,
+          ))),
       );
     } catch (error) {
       if (this.enterStorageWriteQuotaMode(error) || isDurableObjectReadQuotaError(error)) throw error;
@@ -5424,6 +5789,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     collection: Api3CollectionName,
     queryJson = "{}",
   ): Promise<string> {
+    if (collection === "treatments") this.advanceTreatmentReadIndex();
     try {
       const query = JSON.parse(queryJson) as DocumentQuery;
       return JSON.stringify({
@@ -5445,6 +5811,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     queryJson: string,
     uuidHandling: boolean,
   ): Promise<string> {
+    this.advanceTreatmentReadIndex();
     const query = JSON.parse(queryJson) as DocumentQuery;
     query.legacyUuidHandling = uuidHandling;
     return this.legacyTreatmentQueries.read(JSON.stringify(query), () =>

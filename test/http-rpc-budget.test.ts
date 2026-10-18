@@ -92,14 +92,14 @@ it("keeps common HTTP requests within two DO calls for every supported credentia
       method: "POST", headers: { "Content-Type": "text/plain" }, body: "40",
     })).status).toBe(200);
     expect((await send("socket-queued-poll", `/socket.io/?EIO=4&transport=polling&sid=${sid}`)).status).toBe(200);
-    const method = instance.getLegacyDeviceStatusJson;
-    const failure = vi.spyOn(instance, "getLegacyDeviceStatusJson").mockRejectedValue(new Error("synthetic failure"));
+    const method = instance.getLegacyDeviceStatusQueryJson;
+    const failure = vi.spyOn(instance, "getLegacyDeviceStatusQueryJson").mockRejectedValue(new Error("synthetic failure"));
     try {
       expect((await send("data-error-no-retry", paths[0]!)).status).toBe(500);
       expect(failure).toHaveBeenCalledTimes(1);
-      expect(calls).toEqual(["resolveHttpAuthorizationJson", "getLegacyDeviceStatusJson"]);
+      expect(calls).toEqual(["resolveHttpAuthorizationJson", "getLegacyDeviceStatusQueryJson"]);
     } finally { failure.mockRestore(); }
-    expect(instance.getLegacyDeviceStatusJson).toBe(method);
+    expect(instance.getLegacyDeviceStatusQueryJson).toBe(method);
     await state.storage.deleteAlarm();
     return rows;
   });
@@ -195,7 +195,7 @@ it("falls back only for a missing combined RPC and never retries operational fai
       { method: "resolveHttpAuthorizationJson", path: "/api/v1/treatments.json" },
       { method: "getLegacyEntriesResponseJson", path: "/api/v1/entries.json" },
       { method: "getPluginPropertyResponseJson", path: "/api/v2/properties" },
-      { method: "getLegacyDeviceStatusJson", path: "/api/v1/devicestatus.json?count=5" },
+      { method: "getLegacyDeviceStatusQueryJson", path: "/api/v1/devicestatus.json?count=5" },
     ] as const;
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {

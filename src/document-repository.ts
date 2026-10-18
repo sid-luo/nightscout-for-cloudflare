@@ -3,6 +3,11 @@ import type { JsonDocument, JsonValue } from "./entry-store";
 import { LEGACY_ENTRY_DEFAULT_WINDOW_MS } from "./model";
 import type { HistoryQuery, ValidatedEntry } from "./model";
 import { compileMongoRegexToSqlGlob } from "./safe-regex";
+import { initialize as initializeTreatmentReadSideIndex, readState as treatmentReadSideState } from "./treatment-read-side-index";
+import { hasTreatmentsApi3OrderReadIndex, TREATMENTS_API3_ORDER_READ_INDEX } from "./cold-read-indexes";
+import type { LegacyReadCache } from "./legacy-read-cache";
+import { TreatmentOrderReadView, type TreatmentOrderReadSource } from "./treatment-order-read-view";
+import { TreatmentMembershipReadView } from "./treatment-membership-read-view";
 
 export type Api3CollectionName =
   | "devicestatus"
@@ -42,9 +47,16 @@ const MAX_SQL_BINDINGS = 100;
 const MAX_SQL_STATEMENT_BYTES = 100_000;
 const MAX_UNINDEXED_ENTRY_CANDIDATES = 10_000;
 const MAX_SYNCHRONOUS_ENTRY_DELETES = 128;
+export const TREATMENT_READ_INDEX_MIGRATION_LIMIT = 20_000;
+export const TREATMENT_READ_INDEX_TOTAL_DOCUMENT_LIMIT = 100_000;
+// An array's individual members are evaluated by the unchanged Mongo
+// predicate. One shared array bucket lets that branch walk dates in order.
+export const TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL =
+  "CASE WHEN json_type(body, '$.eventType') = 'array' THEN NULL ELSE json_extract(body, '$.eventType') END";
 const API3_MIN_TIMESTAMP = Date.UTC(2000, 0, 1);
 const API3_MIN_UTC_OFFSET = -1_440;
 const API3_MAX_UTC_OFFSET = 1_440;
+const CANONICAL_ISO_QUERY_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 function realtimeJsonTruthySql(path: "$.mbg" | "$.sgv"): string {
   const type = `json_type(body, '${path}')`;
@@ -761,6 +773,23 @@ function fieldExpression(
   collection?: Api3CollectionName,
 ): FieldExpression {
   validateFieldName(field);
+  if (collection === TREATMENTS && (field === "created_at" || field === "eventType")) {
+    // Keep the existing scalar/array Mongo predicates, but use literal paths
+    // so SQLite can match the treatment date/category expression indexes.
+    const path = field === "created_at" ? "$.created_at" : "$.eventType";
+    return {
+      sql: `json_extract(body, '${path}')`,
+      bindings: [],
+      existsSql: `json_type(body, '${path}') IS NOT NULL`,
+      existsBindings: [],
+      textSql: `json_type(body, '${path}') = 'text'`,
+      textBindings: [],
+      typeSql: `json_type(body, '${path}')`,
+      typeBindings: [],
+      arrayEachSql: `json_each(body, '${path}')`,
+      arrayBindings: [],
+    };
+  }
   if (collection === ENTRIES && field === "date") {
     // Both API3 and legacy entry validators make canonical sort_time the
     // integer `date`. Keeping the query expression on this physical column is
@@ -960,6 +989,29 @@ function equalityPredicate(
   return combinePredicates("OR", predicates);
 }
 
+/** Optional equivalent predicate; short arrays avoid json_each row charges. */
+function shortTreatmentStringEquality(expression: FieldExpression, value: string): SqlPredicate {
+  // WHEN conditions short-circuit both non-text values and an early match.
+  // An OR used as a CASE result evaluates the remaining slots even on a hit.
+  const slots = Array.from({ length: 8 }, (_, index) =>
+    `WHEN json_type(body, '$.eventType[${index}]') = 'text'
+      AND json_extract(body, '$.eventType[${index}]') = ? THEN 1`).join(" ");
+  const arraySql = `EXISTS (
+    SELECT 1 FROM ${expression.arrayEachSql} AS item
+    WHERE item.type = 'text' AND item.value = ?
+  )`;
+  return combinePredicates("OR", [scalarEqualityPredicate(expression, value, true), {
+    sql: `(${expression.typeSql} = 'array' AND CASE
+      WHEN typeof(body) = 'text' AND json_type(body, '$.eventType[8]') IS NULL
+        THEN CASE ${slots} ELSE 0 END
+      ELSE ${arraySql} END)`,
+    // The outer array type is already known. Keep binary JSON on the original
+    // lazy iterator: inspecting its tail can fail before an early match.
+    bindings: [...expression.typeBindings, ...Array<string>(8).fill(value),
+      ...expression.arrayBindings!, value],
+  }]);
+}
+
 function comparisonPredicate(
   expression: FieldExpression,
   operator: ">" | ">=" | "<" | "<=",
@@ -1097,6 +1149,7 @@ function appendFilter(
   policy: MaterializationPolicy,
   collection: Api3CollectionName,
   legacyUuidHandling = true,
+  shortTreatmentArrays = false,
 ): void {
   if (
     policy === "legacy"
@@ -1113,7 +1166,10 @@ function appendFilter(
   const expression = fieldExpression(filter.field, policy, collection);
   switch (filter.operator) {
     case "eq": {
-      const predicate = equalityPredicate(expression, filter.value, true);
+      const predicate = shortTreatmentArrays && collection === TREATMENTS
+        && filter.field === "eventType" && typeof filter.value === "string" && filter.value.length <= 512
+        ? shortTreatmentStringEquality(expression, filter.value)
+        : equalityPredicate(expression, filter.value, true);
       clauses.push(predicate.sql);
       bindings.push(...predicate.bindings);
       return;
@@ -1212,6 +1268,11 @@ function assertSqlQueryWithinLimits(statement: string, bindings: SqlStorageValue
       `document query exceeds SQLite's ${MAX_SQL_STATEMENT_BYTES}-byte statement limit`,
     );
   }
+}
+
+function sqlQueryFitsLimits(statement: string, bindings: SqlStorageValue[]): boolean {
+  return bindings.length <= MAX_SQL_BINDINGS
+    && new TextEncoder().encode(statement).byteLength <= MAX_SQL_STATEMENT_BYTES;
 }
 
 function tableColumnNames(
@@ -1943,7 +2004,69 @@ export function migrateDocumentWriteIndexesV29(sql: SqlStorage): void {
   sql.exec("DROP INDEX IF EXISTS document_changes_collection_history");
 }
 
+/**
+ * Legacy treatment reads order equal timestamps by ascending id. The shared
+ * date index has the opposite tie direction, and cannot seek event categories
+ * that are absent from a long history. These indexes preserve the raw JSON
+ * keys, including mixed types; no body, clock or revision is rewritten.
+ */
+export function migrateDocumentReadIndexesV31(sql: SqlStorage): boolean {
+  const indexesPresent = [
+    "documents_treatments_created_at",
+    "documents_treatments_event_type_created_at",
+  ].every(name => sql.exec(`PRAGMA index_info(${name})`).toArray().length > 0);
+  if (indexesPresent) return true;
+  // CREATE INDEX is atomic and cannot be resumed in batches. Avoid a migration
+  // larger than the Free-plan daily write budget blocking every activation.
+  // Marker 31 means this optional optimization was assessed. Large histories
+  // retain their canonical table and receive only empty progressive helpers;
+  // their existing read/write paths stay usable until backfill completes.
+  const exceedsBudget = sql.exec<{ present: number }>(`SELECT EXISTS(
+    SELECT 1 FROM documents WHERE collection = 'treatments'
+    LIMIT 1 OFFSET ${TREATMENT_READ_INDEX_MIGRATION_LIMIT}
+  ) AS present`).one().present !== 0;
+  if (exceedsBudget) { initializeTreatmentReadSideIndex(sql); return false; }
+  // A partial native index still scans the full canonical table to build its
+  // matching keys. Bound that cold read cost too, including other collections.
+  const exceedsTotalBudget = sql.exec<{ present: number }>(`SELECT EXISTS(
+    SELECT 1 FROM documents
+    LIMIT 1 OFFSET ${TREATMENT_READ_INDEX_TOTAL_DOCUMENT_LIMIT}
+  ) AS present`).one().present !== 0;
+  if (exceedsTotalBudget) { initializeTreatmentReadSideIndex(sql); return false; }
+  sql.exec(`
+    CREATE INDEX IF NOT EXISTS documents_treatments_created_at
+      ON documents(collection, json_extract(body, '$.created_at') DESC, id ASC)
+      WHERE collection = 'treatments' AND json_valid(body);
+  `);
+  sql.exec(`
+    CREATE INDEX IF NOT EXISTS documents_treatments_event_type_created_at
+      ON documents(
+        collection,
+        json_type(body, '$.eventType'),
+        ${TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL},
+        json_extract(body, '$.created_at') DESC,
+        id ASC
+      )
+      WHERE collection = 'treatments' AND json_valid(body);
+  `);
+  return true;
+}
+
+const TREATMENT_SIDE_DATE = "treatment_read_side_date";
+const TREATMENT_SIDE_CATEGORY = "treatment_read_side_category";
+const TREATMENT_SIDE_API3 = "treatment_read_side_api3";
+function treatmentSideSource(index: string): string {
+  return `treatment_read_side_keys INDEXED BY ${index} CROSS JOIN documents
+    ON documents.collection = 'treatments' AND documents.id = read_document_id`;
+}
+function treatmentSideDateSql(statement: string): string {
+  return statement.replaceAll("json_extract(body, '$.created_at')", "read_date_key");
+}
+
 export class SqliteDocumentRepository {
+  private treatmentCategoryIndexPresent = false;
+  private documentIdentifierIndexPresent = false;
+
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly onApi3RealtimeMutation?: (event: Api3RealtimeMutationEvent) => void,
@@ -1951,10 +2074,38 @@ export class SqliteDocumentRepository {
       collection: StoredDocumentCollectionName,
       document?: JsonDocument,
     ) => void,
+    private readonly treatmentReadCache?: LegacyReadCache,
+    private readonly onBeforeDataMutation?: (
+      collection: StoredDocumentCollectionName,
+      id: string,
+      previousBody: string | undefined,
+      nextBody: string | undefined,
+    ) => (() => void) | undefined,
   ) {}
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  private hasTreatmentCategoryReadIndex(): boolean {
+    if (!this.treatmentCategoryIndexPresent) {
+      // A tenant may still be on the preceding read schema when its write
+      // quota prevented migration. Keep that tenant's original single-query
+      // path; the scalar/array split only saves reads once its index exists.
+      this.treatmentCategoryIndexPresent = this.sql.exec(
+        "PRAGMA index_info(documents_treatments_event_type_created_at)",
+      ).toArray().length === 5;
+    }
+    return this.treatmentCategoryIndexPresent;
+  }
+
+  private hasDocumentIdentifierIndex(): boolean {
+    if (!this.documentIdentifierIndexPresent) {
+      this.documentIdentifierIndexPresent = this.sql.exec(
+        "PRAGMA index_info(documents_collection_identifier)",
+      ).toArray().length === 2;
+    }
+    return this.documentIdentifierIndexPresent;
   }
 
   private emitApi3RealtimeMutation(
@@ -2302,97 +2453,102 @@ export class SqliteDocumentRepository {
     const body = JSON.stringify(stored);
     const now = Date.now();
 
-    this.sql.exec(
-      `INSERT INTO documents
-        (collection, id, body, sort_time, created_at, updated_at, identifier,
-         identifier_present, srv_created, srv_modified, is_valid, fallback_key, revision,
-         srv_metadata_version, effective_modified)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-       ${existing === undefined
-    ? ""
-    : `ON CONFLICT(collection, id) DO UPDATE SET
-         body = excluded.body,
-         sort_time = excluded.sort_time,
-         updated_at = excluded.updated_at,
-         identifier = excluded.identifier,
-         identifier_present = excluded.identifier_present,
-         srv_created = excluded.srv_created,
-         srv_modified = excluded.srv_modified,
-         effective_modified = excluded.effective_modified,
-         is_valid = excluded.is_valid,
-         fallback_key = excluded.fallback_key,
-         revision = excluded.revision,
-         srv_metadata_version = excluded.srv_metadata_version`}`,
-      collection,
-      id,
-      body,
-      sortTime(stored, existing?.sort_time ?? now),
-      existing?.created_at ?? now,
-      now,
-      identifier,
-      identity.present,
-      srvCreated,
-      srvModified,
-      isValid,
-      fallbackKey(stored, collection),
-      revision,
-      effectiveModified,
-    );
-    this.sql.exec(
-      `INSERT INTO document_changes
-        (collection, id, identifier, identifier_present, body, srv_created, srv_modified,
-         is_valid, revision, operation, srv_metadata_version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      collection,
-      id,
-      identifier,
-      identity.present,
-      body,
-      srvCreated,
-      srvModified,
-      isValid,
-      revision,
-      operation,
-    );
+    const finishReadMutation = this.onBeforeDataMutation?.(collection, id, existing?.body, body);
+    try {
+      this.sql.exec(
+        `INSERT INTO documents
+          (collection, id, body, sort_time, created_at, updated_at, identifier,
+           identifier_present, srv_created, srv_modified, is_valid, fallback_key, revision,
+           srv_metadata_version, effective_modified)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+         ${existing === undefined
+      ? ""
+      : `ON CONFLICT(collection, id) DO UPDATE SET
+           body = excluded.body,
+           sort_time = excluded.sort_time,
+           updated_at = excluded.updated_at,
+           identifier = excluded.identifier,
+           identifier_present = excluded.identifier_present,
+           srv_created = excluded.srv_created,
+           srv_modified = excluded.srv_modified,
+           effective_modified = excluded.effective_modified,
+           is_valid = excluded.is_valid,
+           fallback_key = excluded.fallback_key,
+           revision = excluded.revision,
+           srv_metadata_version = excluded.srv_metadata_version`}`,
+        collection,
+        id,
+        body,
+        sortTime(stored, existing?.sort_time ?? now),
+        existing?.created_at ?? now,
+        now,
+        identifier,
+        identity.present,
+        srvCreated,
+        srvModified,
+        isValid,
+        fallbackKey(stored, collection),
+        revision,
+        effectiveModified,
+      );
+      this.sql.exec(
+        `INSERT INTO document_changes
+          (collection, id, identifier, identifier_present, body, srv_created, srv_modified,
+           is_valid, revision, operation, srv_metadata_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        collection,
+        id,
+        identifier,
+        identity.present,
+        body,
+        srvCreated,
+        srvModified,
+        isValid,
+        revision,
+        operation,
+      );
 
-    if (policy === "api3" && collection === ENTRIES) {
-      // API3 can change fields the narrow v1/realtime shadow cannot represent
-      // (including type and soft-delete metadata). Canonical JSON is always
-      // written first in this transaction; invalidating the shadow keeps v1
-      // reads exact until a later v1 write recreates it synchronously.
-      this.sql.exec("DELETE FROM entries WHERE id = ?", id);
-    }
+      if (policy === "api3" && collection === ENTRIES) {
+        // API3 can change fields the narrow v1/realtime shadow cannot represent
+        // (including type and soft-delete metadata). Canonical JSON is always
+        // written first in this transaction; invalidating the shadow keeps v1
+        // reads exact until a later v1 write recreates it synchronously.
+        this.sql.exec("DELETE FROM entries WHERE id = ?", id);
+      }
 
-    const result: DocumentMutationResult = {
-      document: policy === "api3"
-        ? materializeApi3({
-          id,
-          body,
-        }, api3Collection)
-        : stored,
-      created: existing === undefined,
-      deduplicated: existing !== undefined,
-      revision,
-      srvModified,
-    };
-    const oldIdentifier = existing === undefined ? null : existing.identifier || existing.id;
-    if (existing !== undefined && oldIdentifier !== identifier && oldIdentifier !== null) {
-      result.deduplicatedIdentifier = oldIdentifier;
+      const result: DocumentMutationResult = {
+        document: policy === "api3"
+          ? materializeApi3({
+            id,
+            body,
+          }, api3Collection)
+          : stored,
+        created: existing === undefined,
+        deduplicated: existing !== undefined,
+        revision,
+        srvModified,
+      };
+      const oldIdentifier = existing === undefined ? null : existing.identifier || existing.id;
+      if (existing !== undefined && oldIdentifier !== identifier && oldIdentifier !== null) {
+        result.deduplicatedIdentifier = oldIdentifier;
+      }
+      if (
+        policy === "legacy"
+        && collection !== "activity"
+        && this.onApi3RealtimeMutation !== undefined
+      ) {
+        this.onApi3RealtimeMutation({
+          type: result.created ? "create" : "update",
+          collection: api3Collection,
+          document: materializeApi3({ id, body }, api3Collection),
+          recordRootUpdate: false,
+        });
+      }
+      this.onDataMutation?.(collection, result.document);
+      return result;
+    } finally {
+      finishReadMutation?.();
     }
-    if (
-      policy === "legacy"
-      && collection !== "activity"
-      && this.onApi3RealtimeMutation !== undefined
-    ) {
-      this.onApi3RealtimeMutation({
-        type: result.created ? "create" : "update",
-        collection: api3Collection,
-        document: materializeApi3({ id, body }, api3Collection),
-        recordRootUpdate: false,
-      });
-    }
-    this.onDataMutation?.(collection, result.document);
-    return result;
   }
 
   findTreatmentById(id: string, includeDeleted = false): JsonDocument | null {
@@ -2469,22 +2625,41 @@ export class SqliteDocumentRepository {
           || filter.operator === "lt"
           || filter.operator === "lte")
       );
-    const source = useLegacyDateStringIndex
+    let source = useLegacyDateStringIndex
       ? "documents INDEXED BY documents_entries_date_string_sort"
       : "documents";
+    const identity = (query.filters ?? []).find(filter => filter.field === "_id"
+      && filter.operator === "eq" && typeof filter.value === "string")
+      ?? (query.filters ?? []).find(filter => filter.field === "identifier"
+        && filter.operator === "eq" && typeof filter.value === "string");
+    if (collection === TREATMENTS && identity?.field === "identifier" && this.hasDocumentIdentifierIndex()) {
+      // Measured plans otherwise walk every time-ordered treatment to find a
+      // single identifier. Duplicate identifiers still get the complete
+      // original filter/order/page over their indexed candidate set.
+      source = "documents INDEXED BY documents_collection_identifier";
+    }
     // A literal Entries collection predicate lets SQLite prove partial-index
     // eligibility. Other collections retain the shared bound predicate.
     const clauses = collection === ENTRIES ? ["collection = 'entries'"] : ["collection = ?"];
     const bindings: SqlStorageValue[] = collection === ENTRIES ? [] : [collection];
-    if (collection === TREATMENTS && policy === "legacy" && query.sort === undefined) {
+    if (collection === TREATMENTS && policy === "legacy") {
       // Canonical bodies are serialized JSON. Spell out the existing partial
       // index predicate so latest-N REST reads can walk created_at in order
       // instead of scanning and sorting the entire treatment collection.
-      // Keep the generic scalar/array filters and the legacy id-ascending tie
-      // break: reducing the candidate set before those filters would lose data.
-      clauses.push("collection IN ('treatments', 'devicestatus')", "json_valid(body)");
+      // Every canonical body is serialized JSON, so this is equivalent for
+      // explicit sorts as well. Keep all generic scalar/array predicates and
+      // the requested tie direction; never truncate before those filters.
+      clauses.push("collection IN ('treatments', 'devicestatus')", "json_valid(body)", "collection = 'treatments'");
     }
     if (policy === "api3" && query.includeDeleted !== true) clauses.push("is_valid != 0");
+    // Keep the original predicate/binding contract independently. Only small
+    // filter lists may add the balanced eight-slot alternative: a legal
+    // near-depth query must not grow past SQLite's expression-tree limit.
+    const shortArrays = collection === TREATMENTS && Array.isArray(query.filters) && query.filters.length <= 16
+      && query.filters.some(filter => filter !== null && typeof filter === "object" && filter.field === "eventType"
+        && filter.operator === "eq" && typeof filter.value === "string" && filter.value.length <= 512);
+    const shortClauses = shortArrays ? [...clauses] : clauses;
+    const shortBindings = shortArrays ? [...bindings] : bindings;
     for (const filter of query.filters ?? []) {
       appendFilter(
         clauses,
@@ -2494,6 +2669,8 @@ export class SqliteDocumentRepository {
         collection,
         query.legacyUuidHandling !== false,
       );
+      if (shortArrays) appendFilter(shortClauses, shortBindings, filter, policy, collection,
+        query.legacyUuidHandling !== false, true);
     }
 
     let order = policy === "legacy"
@@ -2501,13 +2678,14 @@ export class SqliteDocumentRepository {
         ? "sort_time DESC, id ASC"
         : "json_extract(body, '$.created_at') DESC, id ASC"
       : "sort_time DESC, srv_modified DESC, id ASC";
+    const sortBindings: SqlStorageValue[] = [];
     if (query.sort !== undefined) {
       const sorts = orderedSorts(query.sort);
       const orderParts: string[] = [];
       for (const sort of sorts) {
         const expression = fieldExpression(sort.field, policy, collection);
         orderParts.push(`${expression.sql} ${sort.direction === "asc" ? "ASC" : "DESC"}`);
-        bindings.push(...expression.bindings);
+        sortBindings.push(...expression.bindings);
       }
       if (!sorts.some((sort) => sort.field === "_id")) {
         const tieDirection = sorts[sorts.length - 1]?.direction === "desc" ? "DESC" : "ASC";
@@ -2515,19 +2693,307 @@ export class SqliteDocumentRepository {
       }
       order = orderParts.join(", ");
     }
-    bindings.push(boundedLimit(query.limit), boundedSkip(query.skip));
+    const limit = boundedLimit(query.limit);
+    const skip = boundedSkip(query.skip);
+    const originalSource = source;
+
+    const predicates: SqlPredicate[] = [{ sql: clauses.join(" AND "), bindings }];
+    const api3IndexedPredicate = collection === TREATMENTS && policy === "api3"
+      ? { sql: `${clauses.join(" AND ")} AND collection IN ('treatments', 'devicestatus')
+          AND json_valid(body) AND collection = 'treatments'`, bindings }
+      : undefined;
+    if (api3IndexedPredicate !== undefined && order.startsWith("json_extract(body, '$.created_at') ")) {
+      // Match the existing raw-created_at partial index without replacing the
+      // original predicate. Near SQL/binding limits retain the preceding path.
+      predicates.unshift(api3IndexedPredicate);
+    }
+    const dateLower = collection === TREATMENTS && policy === "legacy"
+      ? (query.filters ?? []).find(filter => filter.field === "created_at"
+        && filter.operator === "gte" && typeof filter.value === "string"
+        && CANONICAL_ISO_QUERY_DATE.test(filter.value))
+      : undefined;
+    if (dateLower !== undefined) {
+      // Preserve the complete Mongo predicate, including array membership.
+      // For a digit-leading ISO lower bound, any matching scalar also passes
+      // this raw bound. An array's raw JSON starts with '[' (after digits in
+      // BINARY order), so every array still passes this necessary superset.
+      // This lets the date index skip old scalar history. Never infer an
+      // upper bound or apply this reasoning to arbitrary text such as 'zzz'.
+      predicates.unshift({ sql: `${clauses.join(" AND ")} AND json_extract(body, '$.created_at') >= ?`,
+        bindings: [...bindings, sqlValue(dateLower.value)] });
+    }
+    const category = collection === TREATMENTS && identity === undefined
+      && (policy === "api3" || order === "json_extract(body, '$.created_at') DESC, id ASC")
+      ? (query.filters ?? []).find(filter => filter.field === "eventType"
+        && filter.operator === "eq" && typeof filter.value === "string")
+      : undefined;
+    const originalChoices = predicates.map(predicate => ({
+      statement: `SELECT * FROM ${originalSource} WHERE ${predicate.sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      bindings: [...predicate.bindings, ...sortBindings, limit, skip],
+    }));
+    const originalSelected = originalChoices.find(choice => sqlQueryFitsLimits(choice.statement, choice.bindings))
+      ?? originalChoices.at(-1)!;
+    // An optimization may shorten JSON expressions or add joins. Preserve the
+    // original query limit/rejection contract and retain its legal SQL as the
+    // fallback when an optional expanded statement exceeds platform limits.
+    assertSqlQueryWithinLimits(originalSelected.statement, originalSelected.bindings);
+    const readOriginals = new WeakMap<SqlPredicate, SqlPredicate>();
+    const shorten = (predicate: SqlPredicate): SqlPredicate => {
+      const read = {
+        sql: predicate.sql.replace(clauses.join(" AND "), shortClauses.join(" AND ")),
+        bindings: [...shortBindings, ...predicate.bindings.slice(bindings.length)],
+      };
+      readOriginals.set(read, predicate);
+      return read;
+    };
+    let readPredicates = shortArrays
+      ? predicates.flatMap(predicate => [shorten(predicate), predicate]) : predicates;
+    const readSelected = shortArrays ? readPredicates.map(predicate => ({
+      statement: `SELECT * FROM ${originalSource} WHERE ${predicate.sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      bindings: [...predicate.bindings, ...sortBindings, limit, skip],
+    })).find(choice => sqlQueryFitsLimits(choice.statement, choice.bindings)) ?? originalSelected : originalSelected;
+    const membershipCategory = collection === TREATMENTS && identity === undefined
+      ? (query.filters ?? []).find(filter => filter.field === "eventType"
+        && filter.operator === "eq" && typeof filter.value === "string") : undefined;
+    const membershipView = membershipCategory !== undefined && this.treatmentReadCache !== undefined
+      ? new TreatmentMembershipReadView(this.sql, this.treatmentReadCache) : undefined;
+    // A leading bound JSON sort cannot use a native expression index: SQLite
+    // must evaluate/order all matches before LIMIT. Keep the complete original
+    // WHERE and ORDER (including ties), varying only fields/limit/skip. Indexed
+    // prefix sorts retain their lazy error and read boundaries.
+    const canBuildOrderView = collection === TREATMENTS && identity === undefined
+      && query.sort !== undefined && sortBindings.length > 0
+      && fieldExpression(orderedSorts(query.sort)[0]!.field, policy, collection).bindings.length > 0;
+    // Native/indexed reads may reuse an already successful complete first
+    // page too. They never start the optional unindexed-order probe/build.
+    const orderView = collection === TREATMENTS && identity === undefined && this.treatmentReadCache !== undefined
+      ? new TreatmentOrderReadView(this.sql, this.treatmentReadCache) : undefined;
+    const orderViewKey = orderView?.key(originalSelected.statement, originalSelected.bindings);
+    if (orderView !== undefined && orderViewKey !== undefined) {
+      // Reuse a complete native result observed on a preceding first page
+      // before an unrelated pending membership scan can add prewarm work.
+      // Pending orders do no SQL here; a complete member view still wins
+      // before any optional order probe/build below.
+      const ready = orderView.read<DbDocumentV4>(orderViewKey,
+        originalSelected.statement, originalSelected.bindings, limit, skip, undefined, false);
+      if (ready !== undefined) return ready;
+    }
+    if (membershipView !== undefined) {
+      const ids = membershipView.candidates(membershipCategory!.value as string);
+      if (ids !== undefined) {
+        if (ids.length === 0) return [];
+        // LIMIT -1 prevents SQLite from flattening the PK candidate subquery
+        // back into a collection/date scan. Every original residual and the
+        // native sort/page remain outside this complete necessary superset.
+        const statement = originalSelected.statement.replace(
+          `FROM ${originalSource} WHERE`,
+          `FROM (SELECT * FROM documents WHERE collection = 'treatments'
+            AND id IN (SELECT value FROM json_each(?)) LIMIT -1) WHERE`,
+        );
+        const values = [JSON.stringify(ids), ...originalSelected.bindings];
+        if (sqlQueryFitsLimits(statement, values)) return this.sql.exec<DbDocumentV4>(statement, ...values).toArray();
+      }
+      // Legacy already excludes malformed bodies with json_valid. An API3
+      // range/OR bound can change the native plan and encounter a malformed
+      // unknown suffix before a preceding LIMIT match, so keep its old path.
+      const prefix = policy === "legacy" && (query.filters?.length ?? 0) <= 16
+        ? membershipView.partialPrefix(membershipCategory!.value as string) : undefined;
+      if (prefix !== undefined) {
+        // Keep the entire unknown suffix and all old/new mutation candidates.
+        // Only the validated prefix's non-members are omitted; the original
+        // residual, SQLite order and page still decide the result.
+        const barrier = prefix.ids.length === 0 ? "id > ?"
+          : "(id > ? OR id IN (SELECT value FROM json_each(?)))";
+        const extra: SqlStorageValue[] = prefix.ids.length === 0 ? [prefix.after]
+          : [prefix.after, JSON.stringify(prefix.ids)];
+        const guarded = new WeakMap<SqlPredicate, SqlPredicate>();
+        const addPrefix = (predicate: SqlPredicate): SqlPredicate => {
+          const cached = guarded.get(predicate);
+          if (cached !== undefined) return cached;
+          const read = { sql: `${barrier} AND ${predicate.sql}`, bindings: [...extra, ...predicate.bindings] };
+          guarded.set(predicate, read);
+          const original = readOriginals.get(predicate);
+          if (original !== undefined) readOriginals.set(read, addPrefix(original));
+          return read;
+        };
+        const narrowed = readPredicates.map(addPrefix).filter(predicate => sqlQueryFitsLimits(
+          `SELECT * FROM ${originalSource} WHERE ${predicate.sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+          [...predicate.bindings, ...sortBindings, limit, skip],
+        ));
+        // Optional bounds must not reject original legal near-limit queries.
+        readPredicates = [...narrowed, ...readPredicates];
+      }
+    }
+    if (canBuildOrderView && orderView !== undefined && orderViewKey !== undefined) {
+      let boundedSource: TreatmentOrderReadSource | undefined;
+      if (dateLower !== undefined) {
+        const indexedSource = "documents INDEXED BY documents_collection_created_at";
+        const raw = "collection = 'treatments' AND collection IN ('treatments', 'devicestatus') AND json_valid(body) AND json_extract(body, '$.created_at') >= ?";
+        // Probe and build share a forced existing index and the same proven
+        // necessary bound. Merely counting few matches would still permit an
+        // unindexed builder to walk the tenant's entire older history.
+        boundedSource = {
+          probeStatement: `SELECT COUNT(*) AS count FROM (SELECT 1 FROM ${indexedSource} WHERE ${raw} LIMIT 5001)`,
+          probeBindings: [sqlValue(dateLower.value)],
+          buildStatement: readSelected.statement.replace(`FROM ${originalSource} WHERE`, `FROM ${indexedSource} WHERE`)
+            .replace(" ORDER BY ", " AND json_extract(body, '$.created_at') >= ? ORDER BY "),
+          buildBindings: [...readSelected.bindings.slice(0, -sortBindings.length - 2),
+            sqlValue(dateLower.value), ...sortBindings, limit, skip],
+        };
+      }
+      const rows = orderView.read<DbDocumentV4>(orderViewKey,
+        readSelected.statement, readSelected.bindings, limit, skip, boundedSource);
+      if (rows !== undefined) return rows;
+    }
+    const executeRead = (statement: string, values: SqlStorageValue[], precedingReads = 0): DbDocumentV4[] => {
+      const generation = this.treatmentReadCache?.generation;
+      const cursor = this.sql.exec<DbDocumentV4>(statement, ...values);
+      const rows = cursor.toArray();
+      const reads = cursor.rowsRead + precedingReads;
+      membershipView?.noteExpensiveRead(reads);
+      if (orderViewKey !== undefined && orderView !== undefined) {
+        // All selected sources retain the full original WHERE/native ORDER.
+        // A short first page proves complete output; reuse that successful
+        // scan rather than probing/building the same native order next time.
+        if (reads > 512 && generation !== undefined) {
+          orderView.observeCompleteRead(orderViewKey, rows, limit, skip, generation);
+        }
+        if (canBuildOrderView) orderView.noteExpensiveRead(orderViewKey, reads);
+      }
+      return rows;
+    };
+    // Optional source/index planning is needed only after in-memory views miss.
+    const sideReady = collection === TREATMENTS && treatmentReadSideState(this.sql)?.complete === true;
+    let selectedColumns = "*";
+    let sourceOrder = order;
+    let nativeApi3Order = false;
+    if (collection === TREATMENTS && policy === "api3" && identity === undefined
+      && order === "sort_time DESC, srv_modified DESC, id ASC"
+      && hasTreatmentsApi3OrderReadIndex(this.sql)) {
+      source = `documents INDEXED BY ${TREATMENTS_API3_ORDER_READ_INDEX}`;
+      nativeApi3Order = true;
+    } else if (sideReady && identity === undefined) {
+      if (policy === "api3" && order === "sort_time DESC, srv_modified DESC, id ASC") {
+        source = treatmentSideSource(TREATMENT_SIDE_API3);
+        sourceOrder = "read_sort_time DESC, read_srv_modified DESC, read_document_id ASC";
+        selectedColumns = "documents.*";
+      } else if (policy === "legacy" && order === "json_extract(body, '$.created_at') DESC, id ASC") {
+        source = treatmentSideSource(TREATMENT_SIDE_DATE);
+        sourceOrder = treatmentSideDateSql(order).replace(/\bid\b/g, "read_document_id");
+        selectedColumns = "documents.*";
+      }
+    }
+
+    if (collection === TREATMENTS && policy === "legacy" && identity === undefined
+      && order === "json_extract(body, '$.created_at') DESC, id ASC"
+      && limit === 1 && skip === 0 && !sideReady && !this.hasTreatmentCategoryReadIndex()) {
+      // The old date index has id DESC ties. Seek the first matching date key,
+      // then reverse only that exact key to get the original id ASC winner.
+      // Both phases retain every original predicate; NULL is matched with IS.
+      for (const predicate of readPredicates) {
+        const originalStatement = `SELECT * FROM ${source} WHERE ${predicate.sql} ORDER BY ${order} LIMIT ? OFFSET ?`;
+        if (!sqlQueryFitsLimits(originalStatement, [...predicate.bindings, ...sortBindings, limit, skip])) continue;
+        const oldSource = "documents INDEXED BY documents_collection_created_at";
+        const firstStatement = `SELECT json_extract(body, '$.created_at') AS __date_key
+          FROM ${oldSource} WHERE ${predicate.sql}
+          ORDER BY json_extract(body, '$.created_at') DESC LIMIT 1`;
+        const selectedStatement = `SELECT * FROM ${oldSource} WHERE ${predicate.sql}
+          AND json_extract(body, '$.created_at') IS ? ORDER BY id ASC LIMIT 1`;
+        if (!sqlQueryFitsLimits(firstStatement, predicate.bindings)
+          || !sqlQueryFitsLimits(selectedStatement, [...predicate.bindings, null])) continue;
+        const generation = this.treatmentReadCache?.generation;
+        const firstCursor = this.sql.exec<{ __date_key: SqlStorageValue }>(firstStatement, ...predicate.bindings);
+        const first = firstCursor.toArray()[0];
+        if (first === undefined) {
+          membershipView?.noteExpensiveRead(firstCursor.rowsRead);
+          if (firstCursor.rowsRead > 512 && generation !== undefined && orderViewKey !== undefined) {
+            orderView?.observeCompleteRead(orderViewKey, [], limit, skip, generation);
+          }
+          return [];
+        }
+        if (typeof first.__date_key === "number" && !Number.isFinite(first.__date_key)) break;
+        return executeRead(selectedStatement, [...predicate.bindings, first.__date_key], firstCursor.rowsRead);
+      }
+    }
+    if (category !== undefined && Number.isSafeInteger(limit + skip) && (sideReady || this.hasTreatmentCategoryReadIndex())) {
+      // Legacy date order can merge both ordered branches. API3 retains its
+      // original time/custom order over the complete filtered candidates.
+      const categorySource = sideReady ? treatmentSideSource(TREATMENT_SIDE_CATEGORY)
+        : "documents INDEXED BY documents_treatments_event_type_created_at";
+      const eventKind = sideReady ? "read_event_type" : "json_type(body, '$.eventType')";
+      const eventKey = sideReady ? "read_event_value" : TREATMENT_EVENT_TYPE_INDEX_VALUE_SQL;
+      const createdKey = sideReady ? "read_date_key" : "json_extract(body, '$.created_at')";
+      const categoryColumns = sideReady ? "documents.*" : "*";
+      const categoryPredicates = policy === "api3"
+        ? shortArrays ? [shorten(api3IndexedPredicate!), api3IndexedPredicate!] : [api3IndexedPredicate!]
+        : readPredicates;
+      for (const predicate of categoryPredicates) {
+        // The scalar bucket cannot visit an array. Keep its complete original
+        // predicate instead of binding/evaluating an unused eight-slot branch.
+        const scalarPredicate = readOriginals.get(predicate) ?? predicate;
+        const statement = policy === "api3" ? `SELECT * FROM (
+        SELECT ${categoryColumns} FROM ${categorySource} WHERE ${sideReady ? treatmentSideDateSql(scalarPredicate.sql) : scalarPredicate.sql}
+          AND ${eventKind} = 'text'
+          AND ${eventKey} = ?
+        UNION ALL
+        SELECT ${categoryColumns} FROM ${categorySource} WHERE ${sideReady ? treatmentSideDateSql(predicate.sql) : predicate.sql}
+          AND ${eventKind} = 'array'
+          AND ${eventKey} IS NULL
+        ) ORDER BY ${order} LIMIT ? OFFSET ?`
+          : `SELECT ${categoryColumns}, ${createdKey} AS __treatment_order${sideReady ? ", read_document_id AS __treatment_id" : ""}
+        FROM ${categorySource} WHERE ${sideReady ? treatmentSideDateSql(scalarPredicate.sql) : scalarPredicate.sql}
+          AND ${eventKind} = 'text'
+          AND ${eventKey} = ?
+        UNION ALL
+        SELECT ${categoryColumns}, ${createdKey} AS __treatment_order${sideReady ? ", read_document_id AS __treatment_id" : ""}
+        FROM ${categorySource} WHERE ${sideReady ? treatmentSideDateSql(predicate.sql) : predicate.sql}
+          AND ${eventKind} = 'array'
+          AND ${eventKey} IS NULL
+        ORDER BY __treatment_order DESC, ${sideReady ? "__treatment_id" : "id"} ASC LIMIT ? OFFSET ?`;
+        const categoryBindings: SqlStorageValue[] = [
+          ...scalarPredicate.bindings, sqlValue(category.value), ...predicate.bindings,
+          ...(policy === "api3" ? sortBindings : []), limit, skip,
+        ];
+        // Try the original predicate too: a derived bound or repeated branch
+        // must never reject a previously valid near-limit query.
+        if (sqlQueryFitsLimits(statement, categoryBindings)) {
+          if (policy === "api3") {
+            // Sorting thousands of common-category rows would regress a fast
+            // time-index LIMIT read. Admit only a small, complete candidate
+            // set; each covered bucket probe stops at the shared 17th key.
+            const cap = 16;
+            const countBucket = (where: string, values: SqlStorageValue[], remaining: number): number =>
+              this.sql.exec<{ count: number }>(`SELECT COUNT(*) AS count FROM (
+                SELECT 1 FROM ${sideReady ? `treatment_read_side_keys INDEXED BY ${TREATMENT_SIDE_CATEGORY}` : categorySource}
+                WHERE ${sideReady ? "1" : "collection = 'treatments' AND json_valid(body)"} AND ${where}
+                LIMIT ?
+              )`, ...values, remaining).one().count;
+            const scalarCount = countBucket(`${eventKind} = 'text'
+              AND ${eventKey} = ?`, [sqlValue(category.value)], cap + 1);
+            if (scalarCount > cap) break;
+            const arrayCount = countBucket(`${eventKind} = 'array'
+              AND ${eventKey} IS NULL`, [], cap + 1 - scalarCount);
+            if (scalarCount + arrayCount > cap) break;
+          }
+          return executeRead(statement, categoryBindings);
+        }
+      }
+    }
     // Arbitrary JSON fields, compound fallback sorts, and regex/negative
     // predicates have no general SQLite index. Probe the indexed date/id
     // candidate set and fail closed before executing when it exceeds the
     // explicit Free-plan budget. Never truncate then filter: that would return
     // a plausible but incorrect empty/page result.
     if (collection === ENTRIES) this.assertEntryQueryWithinScanBudget(query);
-    const statement = `SELECT * FROM ${source}
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY ${order}
-       LIMIT ? OFFSET ?`;
-    assertSqlQueryWithinLimits(statement, bindings);
-    return this.sql.exec<DbDocumentV4>(statement, ...bindings).toArray();
+    const choices = readPredicates.map(predicate => ({
+      statement: `SELECT ${selectedColumns} FROM ${source}
+        WHERE ${selectedColumns === "documents.*" ? treatmentSideDateSql(predicate.sql) : predicate.sql}${nativeApi3Order ? " AND collection = 'treatments'" : ""}
+        ORDER BY ${sourceOrder} LIMIT ? OFFSET ?`,
+      bindings: [...predicate.bindings, ...sortBindings, limit, skip],
+    }));
+    const selected = choices.find(choice => sqlQueryFitsLimits(choice.statement, choice.bindings)) ?? originalSelected;
+    assertSqlQueryWithinLimits(selected.statement, selected.bindings);
+    return executeRead(selected.statement, selected.bindings);
   }
 
   queryTreatments(query: DocumentQuery = {}): JsonDocument[] {
@@ -3378,22 +3844,25 @@ export class SqliteDocumentRepository {
         if (history.length > MAX_SYNCHRONOUS_ENTRY_DELETES) {
           return { deleted: false, permanent: true, tooLarge: true };
         }
-        this.sql.exec(
-          "DELETE FROM document_changes WHERE collection = ? AND id = ?",
-          collection,
-          existing.id,
-        );
-        this.sql.exec(
-          "DELETE FROM documents WHERE collection = ? AND id = ?",
-          collection,
-          existing.id,
-        );
-        if (collection === ENTRIES) this.sql.exec("DELETE FROM entries WHERE id = ?", existing.id);
-        if (emitRealtime && this.onApi3RealtimeMutation !== undefined) {
-          this.onApi3RealtimeMutation({ type: "delete", collection, identifier: identity });
-        }
-        this.onDataMutation?.(collection);
-        return { deleted: true, permanent: true };
+        const finishReadMutation = this.onBeforeDataMutation?.(collection, existing.id, existing.body, undefined);
+        try {
+          this.sql.exec(
+            "DELETE FROM document_changes WHERE collection = ? AND id = ?",
+            collection,
+            existing.id,
+          );
+          this.sql.exec(
+            "DELETE FROM documents WHERE collection = ? AND id = ?",
+            collection,
+            existing.id,
+          );
+          if (collection === ENTRIES) this.sql.exec("DELETE FROM entries WHERE id = ?", existing.id);
+          if (emitRealtime && this.onApi3RealtimeMutation !== undefined) {
+            this.onApi3RealtimeMutation({ type: "delete", collection, identifier: identity });
+          }
+          this.onDataMutation?.(collection);
+          return { deleted: true, permanent: true };
+        } finally { finishReadMutation?.(); }
       }
       const document = materializeLegacy(existing);
       document.isValid = false;
@@ -3488,19 +3957,22 @@ export class SqliteDocumentRepository {
     return this.storage.transactionSync(() => {
       const existing = this.findByIdRow(id, collection);
       if (existing === undefined) return false;
-      this.sql.exec("DELETE FROM document_changes WHERE collection = ? AND id = ?", collection, id);
-      this.sql.exec("DELETE FROM documents WHERE collection = ? AND id = ?", collection, id);
-      if (collection === ENTRIES) this.sql.exec("DELETE FROM entries WHERE id = ?", id);
-      if (collection !== "activity") {
-        this.onApi3RealtimeMutation?.({
-          type: "delete",
-          collection,
-          identifier: existing.identifier || existing.id,
-          recordRootUpdate: false,
-        });
-      }
-      this.onDataMutation?.(collection);
-      return true;
+      const finishReadMutation = this.onBeforeDataMutation?.(collection, id, existing.body, undefined);
+      try {
+        this.sql.exec("DELETE FROM document_changes WHERE collection = ? AND id = ?", collection, id);
+        this.sql.exec("DELETE FROM documents WHERE collection = ? AND id = ?", collection, id);
+        if (collection === ENTRIES) this.sql.exec("DELETE FROM entries WHERE id = ?", id);
+        if (collection !== "activity") {
+          this.onApi3RealtimeMutation?.({
+            type: "delete",
+            collection,
+            identifier: existing.identifier || existing.id,
+            recordRootUpdate: false,
+          });
+        }
+        this.onDataMutation?.(collection);
+        return true;
+      } finally { finishReadMutation?.(); }
     });
   }
 
@@ -3518,24 +3990,27 @@ export class SqliteDocumentRepository {
             : this.findByIdRow(identity)
           : undefined;
       if (existing === undefined) return false;
-      this.sql.exec(
-        "DELETE FROM document_changes WHERE collection = ? AND id = ?",
-        TREATMENTS,
-        existing.id,
-      );
-      this.sql.exec(
-        "DELETE FROM documents WHERE collection = ? AND id = ?",
-        TREATMENTS,
-        existing.id,
-      );
-      this.onApi3RealtimeMutation?.({
-        type: "delete",
-        collection: TREATMENTS,
-        identifier: existing.identifier || existing.id,
-        recordRootUpdate: false,
-      });
-      this.onDataMutation?.(TREATMENTS);
-      return true;
+      const finishReadMutation = this.onBeforeDataMutation?.(TREATMENTS, existing.id, existing.body, undefined);
+      try {
+        this.sql.exec(
+          "DELETE FROM document_changes WHERE collection = ? AND id = ?",
+          TREATMENTS,
+          existing.id,
+        );
+        this.sql.exec(
+          "DELETE FROM documents WHERE collection = ? AND id = ?",
+          TREATMENTS,
+          existing.id,
+        );
+        this.onApi3RealtimeMutation?.({
+          type: "delete",
+          collection: TREATMENTS,
+          identifier: existing.identifier || existing.id,
+          recordRootUpdate: false,
+        });
+        this.onDataMutation?.(TREATMENTS);
+        return true;
+      } finally { finishReadMutation?.(); }
     });
   }
 

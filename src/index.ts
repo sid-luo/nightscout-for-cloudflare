@@ -2,6 +2,7 @@ import { EntryStore } from "./entry-store";
 import { DexcomShareConnector } from "./dexcom-share-connector";
 import { SourceConnector } from "./source-connector";
 import { WebhookDelivery } from "./webhook-delivery";
+import { diagnosticNamespace, startReadRequestTrace } from "./read-diagnostics";
 import { applyCsp, type CspEnvironment } from "./runtime/csp";
 import { resolveSourceConfig, type SourceEnvironment } from "./connectors/config";
 import mime from "mime";
@@ -184,6 +185,7 @@ type AppEnv = Omit<Env, "API_SECRET"> & DexcomShareEnvironment & SourceEnvironme
   LOOP_DEVELOPER_TEAM_ID?: string;
   LOOP_PUSH_SERVER_ENVIRONMENT?: string;
   UUID_HANDLING?: string;
+  READ_DIAGNOSTICS?: string;
 };
 
 function isMissingDurableObjectRpcMethod(error: unknown, method: string): boolean {
@@ -2319,6 +2321,23 @@ async function legacyDeviceStatusResponse(store: DurableObjectStub<EntryStore>, 
   return store.listDocuments("devicestatus");
 }
 
+async function legacyDeviceStatusQueryResponse(store: DurableObjectStub<EntryStore>, url: URL): Promise<string> {
+  // Keep count validation in the Worker so older DO versions return the same
+  // public invalid-query response while the new query-aware RPC rolls out.
+  const limit = legacyDeviceStatusCandidateLimit(url);
+  if (typeof store.getLegacyDeviceStatusQueryJson === "function") {
+    try {
+      return await store.getLegacyDeviceStatusQueryJson(url.search);
+    } catch (error) {
+      if (!isMissingDurableObjectRpcMethod(error, "getLegacyDeviceStatusQueryJson")) throw error;
+    }
+  }
+  const candidates = parseDocuments(await legacyDeviceStatusResponse(store, limit));
+  // The query-aware RPC already applies the original JavaScript query. Older
+  // RPCs return candidates, so only their fallback needs filtering/sorting.
+  return JSON.stringify(filterDocuments(candidates, url, defaultDocumentCount("devicestatus", url)));
+}
+
 async function handleCollectionApi(
   request: Request,
   env: AppEnv,
@@ -2333,6 +2352,14 @@ async function handleCollectionApi(
   if (request.method === "GET") {
     if (!isLegacyCollectionGetRoute(route)) return null;
     await requirePermission(request, env, url, `api:${collection}:read`);
+    if (collection === "profile" && segment === "current"
+      && typeof store.getLegacyProfileCurrentJson === "function") {
+      try { return json(JSON.parse(await store.getLegacyProfileCurrentJson())); }
+      catch (error) {
+        if (!(error instanceof Error)
+          || !/^RPC receiver does not implement the method "getLegacyProfileCurrentJson"\.?$/.test(error.message)) throw error;
+      }
+    }
     const all = collection === "treatments"
       ? normalizeTreatmentNumbers(parseDocuments(await callUuidAwareRpc(
         uuidHandling,
@@ -2350,13 +2377,13 @@ async function handleCollectionApi(
         ),
       )))
       : collection === "devicestatus"
-        ? parseDocuments(await legacyDeviceStatusResponse(store, legacyDeviceStatusCandidateLimit(url)))
+        ? parseDocuments(await legacyDeviceStatusQueryResponse(store, url))
         : parseDocuments(await store.listDocuments(collection));
     if (collection === "profile" && segment === "current") return json(all[0] ?? null);
     // The locked Food storage helpers do not consume request query options.
     // Preserve their all/regular/quickpicks behavior instead of routing Food
     // through the generic Profile/Activity query adapter.
-    const filtered = collection === "treatments"
+    const filtered = collection === "treatments" || collection === "devicestatus"
       ? all
       : collection === "food"
         ? legacyFoodRead(all, segment)
@@ -3579,7 +3606,14 @@ const application = {
 
 export default {
   async fetch(request: Request, env: AppEnv, ctx?: ExecutionContext): Promise<Response> {
-    const response = await application.fetch(request, env, ctx);
-    return applyCsp(response, env);
+    if (env.READ_DIAGNOSTICS !== "1") return applyCsp(await application.fetch(request, env, ctx), env);
+    const trace = startReadRequestTrace(request);
+    let status = 500;
+    try {
+      const measuredEnv = { ...env, ENTRY_STORE: diagnosticNamespace(env.ENTRY_STORE, trace) };
+      const response = await application.fetch(request, measuredEnv, ctx);
+      status = response.status;
+      return applyCsp(response, env);
+    } finally { trace.finish(status); }
   },
 } satisfies ExportedHandler<AppEnv>;

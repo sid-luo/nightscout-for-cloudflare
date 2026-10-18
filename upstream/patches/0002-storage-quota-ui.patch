@@ -1,0 +1,497 @@
+diff --git a/vendor/nightscout/lib/client/hashauth.js b/vendor/nightscout/lib/client/hashauth.js
+index 4857814..7ce2db0 100644
+--- a/vendor/nightscout/lib/client/hashauth.js
++++ b/vendor/nightscout/lib/client/hashauth.js
+@@ -2,6 +2,7 @@
+ 
+ var Storages = require('js-storage');
+ var textAsHtml = require('../utils/html').textAsHtml;
++var requestErrors = require('./request-errors');
+ 
+ function canUseSubtleCrypto () {
+   return typeof window !== 'undefined'
+@@ -190,47 +191,127 @@ hashauth.init = function init (client, $) {
+   hashauth.isAdmin = false;
+   hashauth.hasWritePermission = false;
+   hashauth.permissionlevel = 'NONE';
++  var verificationAttempt = 0;
++  var secretAttempt = 0;
++  var verificationRetryTimer = null;
++  var verifiedCredentials = null;
++
++  function cancelVerification () {
++    verificationAttempt++;
++    if (verificationRetryTimer !== null) {
++      window.clearTimeout(verificationRetryTimer);
++      verificationRetryTimer = null;
++    }
++  }
+ 
+-  hashauth.verifyAuthentication = function verifyAuthentication (next) {
++  function resetPermissions () {
+     hashauth.authenticated = false;
+-    $.ajax({
+-      method: 'GET'
+-      , url: '/api/v1/verifyauth?t=' + Date.now() //cache buster
+-      , headers: client.headers()
+-    }).done(function verifysuccess (response) {
+-
+-
+-      var message = response.message;
++    hashauth.tokenauthenticated = false;
++    hashauth.hasReadPermission = false;
++    hashauth.hasWritePermission = false;
++    hashauth.isAdmin = false;
++    hashauth.permissionlevel = 'NONE';
++  }
+ 
+-      if (message.canRead) { hashauth.hasReadPermission = true; }
+-      if (message.canWrite) { hashauth.hasWritePermission = true; }
+-      if (message.isAdmin) { hashauth.isAdmin = true; }
+-      if (message.permissions) { hashauth.permissionlevel = message.permissions; }
++  hashauth.verifyAuthentication = function verifyAuthentication (next, candidateDigest) {
++    cancelVerification();
++    var attempt = verificationAttempt;
++    var failures = 0;
++    var temporaryFailure = false;
++    var isCandidate = typeof candidateDigest === 'string';
++
++    function denied (failure) {
++      // A rejected form submission says nothing about the still-active session.
++      // Ordinary revalidation of that session must still revoke on denial.
++      if (!isCandidate) hashauth.removeAuthentication();
++      next(false, failure);
++    }
+ 
+-      if (message.rolefound == 'FOUND') {
+-        hashauth.tokenauthenticated = true;
+-        console.log('Token Authentication passed.');
+-        next(true);
+-        return;
+-      }
++    function retryVerification (request) {
++      if (attempt !== verificationAttempt || verificationRetryTimer !== null) return;
++      var delay = requestErrors.retryDelay(request, failures++);
++      hashauth.injectHtml();
++      requestErrors.showTemporaryFailure($, request, delay);
++      temporaryFailure = true;
++      verificationRetryTimer = window.setTimeout(function retryAfterDelay () {
++        verificationRetryTimer = null;
++        if (attempt === verificationAttempt) verify();
++      }, delay);
++    }
+ 
+-      if (response.message === 'OK' || message.message === 'OK') {
+-        hashauth.authenticated = true;
+-        console.log('Authentication passed.');
+-        next(true);
+-        return;
++    function verify () {
++      // Never let a valid Bearer session authenticate a different form input.
++      // Keep the active credential intact until this exact candidate succeeds.
++      var headers = isCandidate ? { 'api-secret': candidateDigest } : client.headers();
++      var credentials = JSON.stringify(headers);
++      // Retain previously verified permissions through an outage only while
++      // checking the same credential. A newly entered secret grants nothing.
++      if (!isCandidate && credentials !== verifiedCredentials) resetPermissions();
++      var settled = false;
++
++      function acceptCurrentResponse () {
++        if (attempt !== verificationAttempt || settled) return false;
++        settled = true;
++        if (!isCandidate && credentials !== JSON.stringify(client.headers())) {
++          // A background JWT refresh does not call verifyAuthentication and
++          // therefore does not advance its attempt. Discard the old result
++          // and recheck the current credential with the same bounded backoff.
++          resetPermissions();
++          retryVerification({ status: 503 });
++          return false;
++        }
++        return true;
+       }
+ 
+-      console.log('Authentication failed!', response);
+-      hashauth.removeAuthentication();
+-      next(false);
+-      return;
+-
+-    }).fail(function verifyfail (err) {
+-      console.log('Authentication failure', err);
+-      hashauth.removeAuthentication();
+-      next(false);
+-    });
++      $.ajax({
++        method: 'GET'
++        , url: '/api/v1/verifyauth?t=' + Date.now() //cache buster
++        , headers: headers
++        , timeout: 30000
++      }).done(function verifysuccess (response) {
++        if (!acceptCurrentResponse()) return;
++        var message = response && response.message;
++        var tokenFound = message && message.rolefound === 'FOUND';
++        var authorized = message === 'OK' || message && message.message === 'OK';
++        if (authorized || tokenFound && !isCandidate) {
++          if (isCandidate) {
++            client.authorized = null;
++            hashauth.apisecrethash = candidateDigest;
++          }
++          // Refresh every flag, including permission reductions and token/admin
++          // transitions; retaining a previous true flag would hide revocation.
++          resetPermissions();
++          hashauth.hasReadPermission = !!message.canRead;
++          hashauth.hasWritePermission = !!message.canWrite;
++          hashauth.isAdmin = !!message.isAdmin;
++          hashauth.permissionlevel = message.permissions || 'NONE';
++          hashauth.tokenauthenticated = !!tokenFound;
++          hashauth.authenticated = !tokenFound;
++          verifiedCredentials = credentials;
++          if (temporaryFailure) {
++            $('#authenticationmessage').html('');
++            $('#centerMessagePanel').hide();
++          }
++          next(true);
++          return;
++        }
++        if (message === 'UNAUTHORIZED' || message && message.message === 'UNAUTHORIZED') {
++          denied();
++          return;
++        }
++        // A malformed success response is a service failure, not evidence that
++        // the user's secret is wrong.
++        retryVerification({ status: 502 });
++      }).fail(function verifyfail (err) {
++        if (!acceptCurrentResponse()) return;
++        if (requestErrors.isAuthenticationFailure(err)) {
++          denied({ status: err.status });
++        } else {
++          retryVerification(err);
++        }
++      });
++    }
++    verify();
+   };
+ 
+   hashauth.injectHtml = function injectHtml () {
+@@ -250,17 +331,16 @@ hashauth.init = function init (client, $) {
+   };
+ 
+   hashauth.removeAuthentication = function removeAuthentication (event) {
+-
++    cancelVerification();
++    var wasAuthenticated = hashauth.authenticated || hashauth.tokenauthenticated;
+     Storages.localStorage.remove('apisecrethash');
+-
+-    if (hashauth.authenticated || hashauth.tokenauthenticated) {
+-      client.browserUtils.reload();
+-    }
+-
+     // clear everything just in case
+     hashauth.apisecret = null;
+     hashauth.apisecrethash = null;
+-    hashauth.authenticated = false;
++    verifiedCredentials = null;
++    resetPermissions();
++    client.authorized = null;
++    if (wasAuthenticated) client.browserUtils.reload();
+ 
+     if (event) {
+       event.preventDefault();
+@@ -322,37 +402,50 @@ hashauth.init = function init (client, $) {
+ 
+   hashauth.processSecret = async function processSecret (apisecret, storeapisecret, callback) {
+     var translate = client.translate;
+-
+-    hashauth.apisecret = apisecret;
+-    hashauth.storeapisecret = storeapisecret;
+-    if (!hashauth.apisecret || hashauth.apisecret.length < 12) {
++    var submission = ++secretAttempt;
++    // A locally rejected submission also replaces the previous form action.
++    // It must not leave an older HTTP request or quota retry able to sign in.
++    cancelVerification();
++    var attempt = verificationAttempt;
++    var remember = storeapisecret;
++
++    if (!apisecret || apisecret.length < 12) {
+       window.alert(translate('Too short API secret'));
+       if (callback) {
+         callback(false);
+       }
+     } else {
+       try {
+-        hashauth.apisecrethash = await sha1Hex(hashauth.apisecret);
+-
+-        hashauth.verifyAuthentication(function(isok) {
++        var digest = await sha1Hex(apisecret);
++        if (submission !== secretAttempt || attempt !== verificationAttempt) return;
++        hashauth.verifyAuthentication(function(isok, failure) {
++          if (submission !== secretAttempt) return;
+           if (isok) {
+-            if (hashauth.storeapisecret) {
+-              Storages.localStorage.set('apisecrethash', hashauth.apisecrethash);
++            hashauth.apisecret = apisecret;
++            hashauth.storeapisecret = remember;
++            hashauth.apisecrethash = digest;
++            if (remember) {
++              Storages.localStorage.set('apisecrethash', digest);
+               // TODO show dialog first, then reload
+               if (hashauth.tokenauthenticated) client.browserUtils.reload();
++            } else {
++              // A successful unchecked switch must not reload into an older
++              // remembered identity. Failed or pending candidates leave it alone.
++              Storages.localStorage.remove('apisecrethash');
+             }
+             $('#authentication_placeholder').html(hashauth.inlineCode());
+             if (callback) {
+               callback(true);
+             }
+           } else {
+-            alert(translate('Wrong API secret'));
++            window.alert(translate(failure && failure.status === 403 ? 'Access denied for this secret or token' : 'Wrong API secret'));
+             if (callback) {
+               callback(false);
+             }
+           }
+-        });
++        }, digest);
+       } catch (error) {
++        if (submission !== secretAttempt) return;
+         console.error('Error hashing API secret:', error);
+         if (callback) {
+           callback(false);
+@@ -403,6 +496,7 @@ hashauth.init = function init (client, $) {
+       '<div id="requestauthenticationdialog" style="display:none" title="' + translate('Device authentication') + '">' +
+       '<label for="apisecret">' + translate('Your API secret or token') + ': </label>' +
+       '<input type="password" id="apisecret" size="20" style="width: 100%;"/>' +
++      '<div id="authenticationmessage" role="status"></div>' +
+       '<br>' +
+       '<input type="checkbox" id="storeapisecret" /> <label for="storeapisecret">' + translate('Remember this device. (Do not enable this on public computers.)') + '</label>' +
+       '</div>' +
+diff --git a/vendor/nightscout/lib/client/index.js b/vendor/nightscout/lib/client/index.js
+index 950eb39..2002753 100644
+--- a/vendor/nightscout/lib/client/index.js
++++ b/vendor/nightscout/lib/client/index.js
+@@ -12,6 +12,7 @@ var units = require('../units')();
+ var levels = require('../levels');
+ var times = require('../times');
+ var receiveDData = require('./receiveddata');
++var requestErrors = require('./request-errors');
+ 
+ var brushing = false;
+ 
+@@ -22,6 +23,7 @@ var timezones = moment.tz.names();
+ var client = {};
+ var initRetryTimer = null;
+ var initAttempt = 0;
++var initFailures = 0;
+ 
+ function clearInitRetry () {
+   if (initRetryTimer !== null) {
+@@ -58,18 +60,37 @@ client.init = function init (callback) {
+   clearInitRetry();
+   var attempt = ++initAttempt;
+ 
+-  function retryInit () {
++  function retryInit (delay) {
+     if (attempt !== initAttempt || initRetryTimer !== null) return;
+     initRetryTimer = window.setTimeout(function retryAfterDelay () {
+       initRetryTimer = null;
+       if (attempt === initAttempt) client.init(callback);
+-    }, 5000);
++    }, delay || 5000);
+   }
+ 
+   client.browserUtils = require('./browser-utils')($);
+ 
+   var token = client.browserUtils.queryParms().token;
+   var secret = client.hashauth.apisecrethash || Storages.localStorage.get('apisecrethash');
++  var headers = client.headers();
++  var credentials = JSON.stringify([token, secret, headers]);
++  var settled = false;
++
++  function acceptCurrentResponse () {
++    if (attempt !== initAttempt || settled) return false;
++    settled = true;
++    var currentToken = client.browserUtils.queryParms().token;
++    var currentSecret = client.hashauth.apisecrethash || Storages.localStorage.get('apisecrethash');
++    if (credentials !== JSON.stringify([currentToken, currentSecret, client.headers()])) {
++      // Refreshing a token can race either a success or an authorization
++      // failure. Neither response describes the current credential anymore.
++      var delay = requestErrors.retryDelay(null, initFailures++);
++      requestErrors.showTemporaryFailure($, null, delay);
++      retryInit(delay);
++      return false;
++    }
++    return true;
++  }
+ 
+   var src = '/api/v1/status.json?t=' + new Date().getTime();
+ 
+@@ -82,9 +103,10 @@ client.init = function init (callback) {
+   $.ajax({
+     method: 'GET'
+     , url: src
+-    , headers: client.headers()
++    , headers: headers
++    , timeout: 30000
+   }).done(function success (serverSettings) {
+-    if (attempt !== initAttempt) return;
++    if (!acceptCurrentResponse()) return;
+     if (serverSettings.runtimeState !== 'loaded') {
+       console.log('Server is still loading data');
+       $('#loadingMessageText').html('Nightscout is still starting and should be available within about 15 seconds.');
+@@ -92,45 +114,43 @@ client.init = function init (callback) {
+       return;
+     }
+     clearInitRetry();
++    initFailures = 0;
+     client.settingsFailed = false;
+     client.loadLanguage(serverSettings, callback);
+   }).fail(function fail (jqXHR) {
+-    if (attempt !== initAttempt) return;
++    if (!acceptCurrentResponse()) return;
+ 
+-    // check if we couldn't reach the server at all, show offline message
+-    if (!jqXHR.readyState) {
+-      console.log('Application appears to be OFFLINE');
+-      $('#loadingMessageText').html('Connecting to Nightscout server failed, retrying every 5 seconds');
+-      retryInit();
++    if (!requestErrors.isAuthenticationFailure(jqXHR)) {
++      var delay = requestErrors.retryDelay(jqXHR, initFailures++);
++      requestErrors.showTemporaryFailure($, jqXHR, delay);
++      retryInit(delay);
+       return;
+     }
+ 
+-    //no server setting available, use defaults, auth, etc
+-    if (client.settingsFailed) {
+-      console.log('Already tried to get settings after auth, but failed');
+-    } else {
+-      client.settingsFailed = true;
+-
+-      // detect browser language
+-      var lang = Storages.localStorage.get('language') || (navigator.language || navigator.userLanguage).toLowerCase();
+-      if (lang !== 'zh_cn' && lang !== 'zh-cn' && lang !== 'zh_tw' && lang !== 'zh-tw') {
+-        lang = lang.substring(0, 2);
+-      } else {
+-        lang = lang.replace('-', '_');
+-      }
+-      if (language.languages.find(l => l.code === lang)) {
+-        language.set(lang);
+-      } else {
+-        language.set('en');
+-      }
++    // A real authorization denial still requires the user to authenticate.
++    // Reopen the dialog if permissions were revoked after a previous attempt.
++    initFailures = 0;
++    client.settingsFailed = true;
+ 
+-      client.translate = language.translate;
+-      // auth failed, hide loader and request for key
+-      $('#centerMessagePanel').hide();
+-      client.hashauth.requestAuthentication(function afterRequest () {
+-        retryInit();
+-      });
++    // detect browser language
++    var lang = Storages.localStorage.get('language') || (navigator.language || navigator.userLanguage).toLowerCase();
++    if (lang !== 'zh_cn' && lang !== 'zh-cn' && lang !== 'zh_tw' && lang !== 'zh-tw') {
++      lang = lang.substring(0, 2);
++    } else {
++      lang = lang.replace('-', '_');
+     }
++    if (language.languages.find(l => l.code === lang)) {
++      language.set(lang);
++    } else {
++      language.set('en');
++    }
++
++    client.translate = language.translate;
++    // auth failed, hide loader and request for key
++    $('#centerMessagePanel').hide();
++    client.hashauth.requestAuthentication(function afterRequest () {
++      retryInit();
++    });
+   });
+ 
+ };
+@@ -307,8 +327,8 @@ client.load = function load (serverSettings, callback) {
+ 
+   client.afterAuth = function afterAuth (isAuthenticated) {
+ 
+-    var treatmentCreateAllowed = client.authorized ? client.authorized.check('api:treatments:create') : isAuthenticated;
+-    var treatmentUpdateAllowed = client.authorized ? client.authorized.check('api:treatments:update') : isAuthenticated;
++    var treatmentCreateAllowed = client.authorized ? client.authorized.check('api:treatments:create') : isAuthenticated && client.hashauth.hasWritePermission;
++    var treatmentUpdateAllowed = client.authorized ? client.authorized.check('api:treatments:update') : isAuthenticated && client.hashauth.hasWritePermission;
+ 
+     $('#lockedToggle').click(client.hashauth.requestAuthentication).toggle(!treatmentCreateAllowed && client.settings.showPlugins.indexOf('careportal') > -1);
+     $('#treatmentDrawerToggle').toggle(treatmentCreateAllowed && client.settings.showPlugins.indexOf('careportal') > -1);
+@@ -861,15 +881,19 @@ client.load = function load (serverSettings, callback) {
+ 
+   function refreshAuthIfNeeded () {
+     var clientToken = client.authorized ? client.authorized.token : null;
+-    var token = client.browserUtils.queryParms().token || clientToken;
++    // Renew the active identity, including after a form-based switch. A token
++    // left in the page URL can describe the preceding session.
++    var token = clientToken || client.browserUtils.queryParms().token;
+     if (token && client.authorized) {
+       var renewTime = (client.authorized.exp * 1000) - times.mins(15).msecs - Math.abs((client.authorized.iat * 1000) - client.authorized.lat);
+       var refreshIn = Math.round((renewTime - client.now) / 1000);
+       if (client.now > renewTime) {
+         console.info('Refreshing authorization renewal');
++        var session = client.authorized;
++        var secret = client.hashauth.hash();
+         $.ajax('/api/v2/authorization/request/' + token, {
+           success: function(authorized) {
+-            if (authorized) {
++            if (authorized && client.authorized === session && client.hashauth.hash() === secret) {
+               console.info('Got new authorization', authorized);
+               authorized.lat = client.now;
+               client.authorized = authorized;
+diff --git a/vendor/nightscout/lib/client/request-errors.js b/vendor/nightscout/lib/client/request-errors.js
+new file mode 100644
+index 0000000..dc391e8
+--- /dev/null
++++ b/vendor/nightscout/lib/client/request-errors.js
+@@ -0,0 +1,43 @@
++'use strict';
++
++// Only an explicit authorization rejection should invalidate credentials.
++// Network failures, rate limits and unavailable storage cannot verify them.
++exports.isAuthenticationFailure = function isAuthenticationFailure (request) {
++  return request && (request.status === 401 || request.status === 403);
++};
++
++function storageQuotaKind (request) {
++  var code = request && request.responseJSON && request.responseJSON.error && request.responseJSON.error.code;
++  if (code === 'storage_read_quota_exceeded') return 'read';
++  if (code === 'storage_write_quota_exceeded') return 'write';
++  return null;
++}
++
++exports.retryDelay = function retryDelay (request, failures) {
++  var backoff = Math.min(60000, 5000 * Math.pow(2, Math.min(failures || 0, 4)));
++  var header = request && typeof request.getResponseHeader === 'function' ? request.getResponseHeader('Retry-After') : null;
++  var delay = NaN;
++  if (typeof header === 'string') {
++    header = header.trim();
++    if (/^\d+$/.test(header)) delay = Number(header) * 1000;
++    else if (/GMT$/.test(header)) delay = Date.parse(header) - Date.now();
++  }
++  if (!Number.isFinite(delay) && storageQuotaKind(request)) {
++    var now = new Date();
++    delay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - Date.now();
++  }
++  // Keep setTimeout within its signed 32-bit range; an overflow retries at once.
++  return Math.max(backoff, Math.min(2147483647, Number.isFinite(delay) ? delay : 0));
++};
++
++exports.showTemporaryFailure = function showTemporaryFailure ($, request, delay) {
++  var kind = storageQuotaKind(request);
++  var message = kind ? 'Storage ' + kind + ' quota reached.'
++    : request && request.status ? 'Nightscout is temporarily unavailable.' : 'Cannot reach the Nightscout server.';
++  message += ' Retrying in ' + Math.ceil(delay / 1000) + ' seconds.';
++  // All text is locally generated. Never display arbitrary upstream errors,
++  // response bodies, request headers, URLs or credentials in the page.
++  $('#centerMessagePanel').show();
++  $('#loadingMessageText').html(message);
++  $('#authenticationmessage').html(message);
++};
