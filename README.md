@@ -16,6 +16,8 @@ This is an independent, unofficial open-source port. Actual costs depend on your
 
 Both installers and GitHub `main` provide **1.3.2**. Existing instances update only when their owner starts an upgrade.
 
+The [`1.4` test branch](https://github.com/sid-luo/nightscout-for-cloudflare/tree/1.4) is labeled **1.4.0-beta.1** and contains further read-quota hardening. It is a prerelease for validation; see the [measurements and test scope](docs/testing/READ_QUOTA_HARDENING.md). GitHub `main` and the default installers remain on stable **1.3.2**.
+
 ## Why this project exists
 
 Nightscout is a great project. As a long-time user, I hope more people can deploy and use Nightscout easily, quickly and at low cost.

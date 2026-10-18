@@ -2,11 +2,13 @@
 
 Base: stable 1.3.2, `8d2395a0e7141feb55c6656ef62801795ab4c1f3`.
 Development branch: `1.4`, prepared from the sealed `read-budget-hardening`
-work on October 18, 2026. The package version remains 1.3.2; this branch is
-for validation and is not a stable 1.4 release. No tag, main-branch merge or
-deployment is part of this upload. Runtime and test files match the final
-local audit; only this branch-status note was added for upload. Dated audit
-sections preserve the local state at the time of measurement.
+work on October 18, 2026. This branch is now labeled `1.4.0-beta.1` for
+prerelease packaging and opt-in upgrade validation; it is not a stable 1.4
+release. Version metadata, the displayed version and matching assertions are
+updated; runtime logic remains the final sealed audit implementation. GitHub
+`main` and the default installers remain on stable 1.3.2. No tag or main-branch
+merge is included. Dated audit sections preserve the local state and version
+at the time of measurement.
 
 The reporting YouTube user's version, workload and database remain unknown;
 these are reproducible shared-code defects, not a claim to have uniquely
