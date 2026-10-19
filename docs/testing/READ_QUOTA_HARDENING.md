@@ -1,14 +1,13 @@
-# Read quota hardening — local work, October 18, 2026
+# Read quota hardening — NSCF 1.4.0
 
 Base: stable 1.3.2, `8d2395a0e7141feb55c6656ef62801795ab4c1f3`.
-Development branch: `1.4`, prepared from the sealed `read-budget-hardening`
-work on October 18, 2026. This branch is now labeled `1.4.0-beta.1` for
-prerelease packaging and opt-in upgrade validation; it is not a stable 1.4
-release. Version metadata, the displayed version and matching assertions are
-updated; runtime logic remains the final sealed audit implementation. GitHub
-`main` and the default installers remain on stable 1.3.2. No tag or main-branch
-merge is included. Dated audit sections preserve the local state and version
-at the time of measurement.
+NSCF 1.4.0 promotes the sealed `read-budget-hardening` implementation prepared
+on October 18, 2026 and subsequently packaged as `1.4.0-beta.1` on branch `1.4`.
+The stable release updates version metadata, the displayed version and matching
+assertions; runtime logic remains the final sealed audit implementation.
+Dated audit sections preserve the local state and version at the time of
+measurement. Release availability and user-facing changes are recorded in the
+[changelog](../../CHANGELOG.md).
 
 The reporting YouTube user's version, workload and database remain unknown;
 these are reproducible shared-code defects, not a claim to have uniquely

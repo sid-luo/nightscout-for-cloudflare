@@ -67,8 +67,7 @@ const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${trans
 const locals = { bundle: "/bundle", cachebuster };
 
 function displayProjectVersion(version) {
-  return version
-    .replace(/^(\d+\.\d+)\.0$/, "$1");
+  return version;
 }
 
 function escapeHtml(value) {
