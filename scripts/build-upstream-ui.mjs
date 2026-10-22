@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ejs from "ejs";
 import { buildReportAdapter, patchCandles } from "./report-adapter-source.mjs";
+import { displayProjectVersion } from "./project-version.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, "..");
@@ -66,10 +67,6 @@ const transportCachebuster = createHash("sha256")
 const cachebuster = `${manifest.release}-${manifest.commit.slice(0, 12)}-${transportCachebuster}-${appCachebuster}`;
 const locals = { bundle: "/bundle", cachebuster };
 
-function displayProjectVersion(version) {
-  return version;
-}
-
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
@@ -80,7 +77,7 @@ function escapeHtml(value) {
   })[character]);
 }
 
-const projectVersion = escapeHtml(displayProjectVersion(projectPackage.version));
+const projectVersion = escapeHtml(displayProjectVersion(projectPackage));
 const projectHomepage = escapeHtml(projectPackage.homepage.replace(/#readme$/, ""));
 const projectIssues = escapeHtml(projectPackage.bugs.url);
 

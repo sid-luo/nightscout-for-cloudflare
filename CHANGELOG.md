@@ -6,6 +6,18 @@ This log covers Nightscout for Cloudflare changes. The upstream Nightscout
 version is tracked separately. Existing users should follow the
 [upgrade instructions](README.md#2-upgrading). Upgrades currently support only instances deployed with the quick installer.
 
+## 20261022-beta — Device-status reads across hibernation (2026-10-22, testing)
+
+Builds on 1.4.0 and starts date-based project version labels. The public version is `20261022-beta`; npm metadata uses `2026.10.22-beta`. The upstream Nightscout and API versions remain unchanged. See [version naming](docs/testing/VERSIONING.md).
+
+- Reuse bounded API3 device-status query prefixes and enabled alert inputs after real Durable Object eviction. New uploads invalidate persisted proofs transactionally and maintain eligible prefixes through native primary-key checks; updates, deletions, time windows and rollback preserve canonical results.
+- Repeated empty-device polls and custom sorts avoid repeated history scans. Moving windows can check only selected rows when the native query proves the cached prefix remains sufficient. Unseen queries still execute the original SQL.
+- Add optional storage-cost attribution for activation, RPCs, alarms, WebSocket callbacks, notifications and background work. Diagnostics stay disabled by default and omit record bodies, credentials and query values.
+
+Local workerd regression with four minute uploads and 16 real cold alarm activations reduces **32,577 to 3,374 rows read**, with **122 to 137 rows written**. Three learned API3 queries over 12,000 synthetic statuses total **448 reads / 0 writes across 16 cold poll rounds**; initial query enrollment still scans history. A participating upload adds a small checkpoint write cost. These are scoped synthetic measurements, not account bills; see [the complete methods and bounds](docs/testing/POST_1_4_READ_BUDGET.md).
+
+The unchanged runtime fixes passed **1,384 tests across 182 Workers files**, including the existing full-day workload and its original assertions. Date labels and rebuilt UI are checked separately. This entry describes the testing source; it does not announce a formal release, installer change or automatic instance upgrade.
+
 ## 1.4.0 — Database read optimization and authentication fixes (2026-10-20)
 
 Based on Nightscout 15.0.8, this version further reduces repeated database reads and fixes quota error messages and API key verification.

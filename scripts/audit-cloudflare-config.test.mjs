@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { displayProjectVersion } from "./project-version.mjs";
 
 const configUrl = new URL("../wrangler.jsonc", import.meta.url);
 const packageUrl = new URL("../package.json", import.meta.url);
@@ -54,7 +55,9 @@ test("Deploy to Cloudflare template requests one plaintext value and a clean-sou
     "node --test scripts/cloudflare-auto-update.test.mjs",
   );
   assert.equal(packageJson.scripts?.deploy, "wrangler deploy");
-  assert.equal(packageJson.version, "1.4.0");
+  assert.equal(packageJson.version, "2026.10.22-beta");
+  assert.equal(packageJson.nscfVersion, "20261022-beta");
+  assert.equal(displayProjectVersion(packageJson), packageJson.nscfVersion);
   assert.equal(
     packageJson.repository?.url,
     "git+https://github.com/sid-luo/nightscout-for-cloudflare.git",
@@ -72,4 +75,24 @@ test("Deploy to Cloudflare template requests one plaintext value and a clean-sou
     /\]\(https:\/\/deploy\.workers\.cloudflare\.com\/\?url=https:\/\/github\.com\/sid-luo\/nightscout-for-cloudflare\)/,
   );
   assert.equal(nodeVersion, "22.16.0");
+});
+
+test("calendar release labels match a real date and their package prerelease state", () => {
+  assert.equal(displayProjectVersion({ version: "1.4.0" }), "1.4.0");
+  for (const [version, nscfVersion] of [
+    ["2026.10.22-beta", "20261022-beta"],
+    ["2026.10.22", "20261022"],
+    ["2026.1.2-beta", "20260102-beta"],
+    ["2028.2.29", "20280229"],
+  ]) assert.equal(displayProjectVersion({ version, nscfVersion }), nscfVersion);
+  for (const [version, nscfVersion] of [
+    ["2026.10.22-beta", "20261022"],
+    ["2026.10.22", "20261022-beta"],
+    ["2026.10.22-beta", "20261023-beta"],
+    ["2026.2.29-beta", "20260229-beta"],
+    ["2026.13.1", "20261301"],
+    ["2026.01.02-beta", "20260102-beta"],
+    ["1.4.0", "20261022-beta"],
+    ["20261022-beta", "20261022-beta"],
+  ]) assert.throws(() => displayProjectVersion({ version, nscfVersion }), /nscfVersion must match/);
 });

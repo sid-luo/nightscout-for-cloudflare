@@ -18,7 +18,9 @@ without renting a separate server or MongoDB service.
 It is an independent, unofficial port, not an official Nightscout release.
 Actual costs depend on your Cloudflare plan and usage.
 
-Nightscout for Cloudflare version: **1.4.0**
+Nightscout for Cloudflare version: **20261022-beta**
+
+This is the testing branch. The web installer and upgrade page still default to the released **1.4.0**; this beta is not yet offered there.
 
 Upstream Nightscout version: **15.0.8**
 
@@ -39,12 +41,12 @@ Nightscout is a great project. As a long-time user, I hope more people can deplo
 - Preview and clean up glucose, treatment and device-status records, and manage Profiles in Admin Tools.
 - Enable data sources and Webhooks as needed. Newly added integrations are disabled by default; real third-party compatibility is still being validated.
 
-## What is new in 1.4.0
+## What is new in 20261022-beta
 
-- Reduce repeated database reads during ongoing synchronization, browser refreshes and access by multiple clients.
-- Improve cold starts, cache rebuilding, large databases, array filters and custom sorting.
-- Fix read-quota failures being reported as an incorrect API key, and prevent an existing login from interfering with verification of a newly entered key.
-- Add optional, default-off read diagnostics that exclude sensitive data and help investigate database costs.
+- Reuse device-status queries and alert inputs after Cloudflare objects hibernate, reducing repeated history reads during client polling.
+- Keep results current during uploads, updates and deletions while preserving filtering, sorting, pagination and rollback behavior.
+- Extend optional, default-off diagnostics to cold activation, alarms, real-time connections and background work.
+- Use date-based project versions. The upstream Nightscout version remains **15.0.8**.
 
 See the [changelog](CHANGELOG.md) for the complete version history, test results and release availability.
 
@@ -76,7 +78,7 @@ Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
 - Nightscout upstream version: **15.0.8**
-- Nightscout for Cloudflare version: **1.4.0**
+- Nightscout for Cloudflare version: **20261022-beta**
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible
