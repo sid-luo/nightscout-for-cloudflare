@@ -20,7 +20,7 @@ Actual costs depend on your Cloudflare plan and usage.
 
 Nightscout for Cloudflare version: **20261022-beta**
 
-This is the testing branch. The web installer and upgrade page still default to the released **1.4.0**; this beta is not yet offered there.
+This is the testing branch. New web-installer installations still use **1.4.0**. The upgrade page defaults to **20261022-beta** and keeps **1.4.0** available for manual selection; check and confirm the original instance before upgrading.
 
 Upstream Nightscout version: **15.0.8**
 
