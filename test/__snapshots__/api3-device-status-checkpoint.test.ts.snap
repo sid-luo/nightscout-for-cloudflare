@@ -1,0 +1,127 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`API3 device-status checkpoint payload > reuses newly enrolled native plans after every 15-second eviction and maintains them on cold minute uploads > every-15s cold API3 native checkpoint budget 1`] = `
+{
+  "initial": [
+    {
+      "nativeReads": 12001,
+      "reads": 12537,
+      "writes": 7,
+    },
+    {
+      "nativeReads": 24000,
+      "reads": 24019,
+      "writes": 1,
+    },
+    {
+      "nativeReads": 12001,
+      "reads": 12020,
+      "writes": 1,
+    },
+  ],
+  "polls": [
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 0,
+      "reads": 27,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 4,
+      "reads": 31,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 4,
+      "reads": 31,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 4,
+      "reads": 31,
+      "writes": 0,
+    },
+    {
+      "nativeReads": 4,
+      "reads": 31,
+      "writes": 0,
+    },
+  ],
+  "uploads": [
+    {
+      "nativeReads": 25,
+      "reads": 71,
+      "writes": 18,
+    },
+    {
+      "nativeReads": 25,
+      "reads": 73,
+      "writes": 17,
+    },
+    {
+      "nativeReads": 25,
+      "reads": 73,
+      "writes": 17,
+    },
+    {
+      "nativeReads": 33,
+      "reads": 81,
+      "writes": 17,
+    },
+  ],
+}
+`;

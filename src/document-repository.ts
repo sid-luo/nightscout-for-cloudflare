@@ -8,6 +8,7 @@ import { hasTreatmentsApi3OrderReadIndex, TREATMENTS_API3_ORDER_READ_INDEX } fro
 import type { LegacyReadCache } from "./legacy-read-cache";
 import { TreatmentOrderReadView, type TreatmentOrderReadSource } from "./treatment-order-read-view";
 import { TreatmentMembershipReadView } from "./treatment-membership-read-view";
+import type { Api3DeviceStatusCacheReader, Api3DeviceStatusPlan } from "./api3/device-status-query-cache";
 
 export type Api3CollectionName =
   | "devicestatus"
@@ -205,7 +206,7 @@ export interface Api3MutationOptions {
   emitRealtime?: boolean;
 }
 
-interface DbDocumentV4 {
+export interface DbDocumentV4 {
   [key: string]: SqlStorageValue;
   id: string;
   body: string;
@@ -2081,10 +2082,27 @@ export class SqliteDocumentRepository {
       previousBody: string | undefined,
       nextBody: string | undefined,
     ) => (() => void) | undefined,
+    private readonly api3DeviceStatusReadCache?: Api3DeviceStatusCacheReader<DbDocumentV4>,
   ) {}
 
   private get sql(): SqlStorage {
     return this.storage.sql;
+  }
+
+  /** Native query validation/compilation without reading canonical data. Used
+   * to restore optional result prefixes without trusting persisted SQL text.
+   */
+  static compileApi3DeviceStatusPlan(query: DocumentQuery): Api3DeviceStatusPlan {
+    let compiled: Api3DeviceStatusPlan | undefined;
+    const noStorage = new Proxy({} as DurableObjectStorage, { get() {
+      throw new Error("API3 device-status plan compilation must not access storage");
+    } });
+    const planner = new SqliteDocumentRepository(noStorage, undefined, undefined, undefined, undefined, {
+      read(_query, plan) { compiled = structuredClone(plan); return []; },
+    });
+    planner.queryTreatmentRows(query, "api3", DEVICESTATUS);
+    if (compiled === undefined) throw new Error("Unsupported API3 device-status query plan");
+    return compiled;
   }
 
   private hasTreatmentCategoryReadIndex(): boolean {
@@ -2991,8 +3009,17 @@ export class SqliteDocumentRepository {
         ORDER BY ${sourceOrder} LIMIT ? OFFSET ?`,
       bindings: [...predicate.bindings, ...sortBindings, limit, skip],
     }));
-    const selected = choices.find(choice => sqlQueryFitsLimits(choice.statement, choice.bindings)) ?? originalSelected;
+    const selectedIndex = choices.findIndex(choice => sqlQueryFitsLimits(choice.statement, choice.bindings));
+    const selected = choices[selectedIndex] ?? originalSelected;
     assertSqlQueryWithinLimits(selected.statement, selected.bindings);
+    if (collection === DEVICESTATUS && policy === "api3" && selectedIndex >= 0
+      && this.api3DeviceStatusReadCache !== undefined) {
+      const predicate = readPredicates[selectedIndex]!;
+      return this.api3DeviceStatusReadCache.read(query, {
+        where: predicate.sql, bindings: predicate.bindings,
+        order: sourceOrder, orderBindings: sortBindings, limit, skip,
+      }, () => executeRead(selected.statement, selected.bindings), () => this.sql);
+    }
     return executeRead(selected.statement, selected.bindings);
   }
 

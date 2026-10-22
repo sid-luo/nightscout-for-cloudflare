@@ -1,6 +1,8 @@
 import { sanitizeStoredDocument, validateLegacyProfileStartDate } from "./storage-purifier";
 import { resolveWebhook, type WebhookEnvironment } from "./webhook-delivery";
 import { DeviceStatusQueryCache } from "./realtime/device-status-query-cache";
+import { AlertDeviceStatusQueryCache } from "./realtime/alert-device-status-query-cache";
+import { DurableReadCheckpoint } from "./durable-read-checkpoint";
 import { AuxiliaryQueryCache } from "./realtime/auxiliary-query-cache";
 import { BoundedWindowQueryCache } from "./realtime/bounded-window-query-cache";
 import { LegacyReadCache } from "./legacy-read-cache";
@@ -8,6 +10,7 @@ import { TreatmentMembershipReadView, TREATMENT_MEMBERSHIP_VIEW_KEY } from "./tr
 import { TREATMENT_ORDER_SOURCE_KEY } from "./treatment-order-read-view";
 import { LegacyDeviceStatusCandidateCache } from "./legacy-device-status-candidate-cache";
 import { LegacyDeviceStatusQuery } from "./legacy-device-status-query";
+import { Api3DeviceStatusQueryCache } from "./api3/device-status-query-cache";
 import { DEVICE_STATUS_RECENT_READ_INDEX, migrateColdReadIndexesV33, hasDeviceStatusRecentReadIndex } from "./cold-read-indexes";
 import { initialize as initializeTreatmentReadSideIndex, advance as advanceTreatmentReadSideIndex, readState as treatmentReadSideState } from "./treatment-read-side-index";
 import { resolveHttpAuthorization, type HttpAuthorizationRequest } from "./http-authorization";
@@ -44,7 +47,14 @@ import {
   verifyJwt as validateJwt,
 } from "./jwt";
 import { permissionGroupsAllow } from "./permissions";
-import { isDiagnosticReadOperation, measureDiagnosticRead } from "./read-diagnostics";
+import {
+  diagnosticStorageOperationKind,
+  isDiagnosticReadOperation,
+  isDiagnosticStorageOperation,
+  measureDiagnosticRead,
+  measureDiagnosticStorageOperation,
+  withStorageDiagnostics,
+} from "./read-diagnostics";
 import { ProfileReadValidity } from "./profile-read-validity";
 import {
   documentReadSchemaIsCurrent,
@@ -62,6 +72,7 @@ import {
   type DocumentDeleteResult,
   type DocumentHistoryQuery,
   type DocumentQuery,
+  type DbDocumentV4,
 } from "./document-repository";
 import {
   DurableObjectWriteQuotaError,
@@ -248,6 +259,7 @@ type EntryStoreEnv = Env
   AUTH_DEFAULT_ROLES?: string;
   PREDICTIONS_MAX_SIZE?: string;
   UUID_HANDLING?: string;
+  READ_DIAGNOSTICS?: string;
 };
 
 export const ENTRY_STORE_ACTIVATION_SEAL = 34;
@@ -839,6 +851,9 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private realtimeEntryQueries = new RealtimeEntryQueryCache<DbDocument>();
   private entryCacheMutation = false;
   private realtimeDeviceStatusQueries = new DeviceStatusQueryCache<DbDocument>();
+  private alertDeviceStatusQueries = new AlertDeviceStatusQueryCache<DbDocument>();
+  private alertDeviceStatusCheckpoint = new DurableReadCheckpoint(this.ctx.storage, "alert");
+  private api3DeviceStatusCheckpoint = new DurableReadCheckpoint(this.ctx.storage, "api3");
   private deviceStatusCacheMutation = false;
   private readonly recentTreatmentQueries = new RecentTreatmentQueryCache<DbDocument>();
   private readonly boundedTreatmentQueries = new BoundedWindowQueryCache<DbDocument>();
@@ -848,6 +863,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private auxiliaryTreatmentBulk: { allowLearning: boolean; learningStarted: boolean } | undefined;
   private readonly legacyDeviceStatusQueries = new LegacyReadCache();
   private legacyDeviceStatusCandidates = new LegacyDeviceStatusCandidateCache<DbDocument>();
+  private api3DeviceStatusQueries = new Api3DeviceStatusQueryCache<DbDocumentV4>();
   private readonly legacyTreatmentQueries = new LegacyReadCache(
     128, 4 * 1024 * 1024, 1024 * 1024,
     [TREATMENT_MEMBERSHIP_VIEW_KEY, TREATMENT_ORDER_SOURCE_KEY],
@@ -883,39 +899,41 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       authorizeAlarm: (message) => this.realtimeAlarmAuthorize(message),
       writeRoot: (request) => this.realtimeRootWrite(request),
     });
-    ctx.blockConcurrencyWhile(async () => {
-      try {
-        if (!entryStoreSchemaIsActivationReady(this.ctx.storage.sql)) {
-          this.storageSchemaInitializationPending = true;
-          try {
-            this.completeStorageInitialization();
-          } catch (error) {
-            if (
-              !isEntryStoreWriteQuotaError(error)
-              || !entryStoreSchemaSupportsCoreReadOnly(this.ctx.storage.sql)
-            ) {
-              throw error;
+    ctx.blockConcurrencyWhile(() => withStorageDiagnostics(
+      ctx.storage.sql, env.READ_DIAGNOSTICS, "activation", async () => {
+        try {
+          if (!entryStoreSchemaIsActivationReady(this.ctx.storage.sql)) {
+            this.storageSchemaInitializationPending = true;
+            try {
+              this.completeStorageInitialization();
+            } catch (error) {
+              if (
+                !isEntryStoreWriteQuotaError(error)
+                || !entryStoreSchemaSupportsCoreReadOnly(this.ctx.storage.sql)
+              ) {
+                throw error;
+              }
+              this.realtimeAlarmRecoveryPending = true;
+              this.enterStorageWriteQuotaMode(error);
+              return;
             }
+          }
+          if (this.storageWritesBlocked()) return;
+          try {
+            this.reconcileRealtimeWebSocketSessions();
+            await this.synchronizeRealtimeAlarm();
+          } catch (error) {
+            if (!isEntryStoreWriteQuotaError(error)) throw error;
             this.realtimeAlarmRecoveryPending = true;
             this.enterStorageWriteQuotaMode(error);
-            return;
           }
+        } finally {
+          // One zero-source marker after all constructor migration/recovery.
+          // Any later row-DML change declines this activation's proof.
+          this.profileReadValidity.initialize();
         }
-        if (this.storageWritesBlocked()) return;
-        try {
-          this.reconcileRealtimeWebSocketSessions();
-          await this.synchronizeRealtimeAlarm();
-        } catch (error) {
-          if (!isEntryStoreWriteQuotaError(error)) throw error;
-          this.realtimeAlarmRecoveryPending = true;
-          this.enterStorageWriteQuotaMode(error);
-        }
-      } finally {
-        // One zero-source marker after all constructor migration/recovery.
-        // Any later row-DML change declines this activation's proof.
-        this.profileReadValidity.initialize();
-      }
-    });
+      },
+    ));
   }
 
   private completeStorageInitialization(): void {
@@ -924,6 +942,10 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     this.legacyTreatmentQueries.clear();
     this.realtimeEntryQueries.clear();
     this.realtimeDeviceStatusQueries.clear();
+    this.alertDeviceStatusQueries.clear();
+    this.api3DeviceStatusQueries.clear();
+    this.alertDeviceStatusCheckpoint.reset();
+    this.api3DeviceStatusCheckpoint.reset();
     for (const cache of Object.values(this.realtimeAuxiliaryQueries)) cache.clear();
     this.recentTreatmentQueries.clear();
     this.boundedTreatmentQueries.clear();
@@ -1331,6 +1353,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   override async fetch(request: Request): Promise<Response> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "websocket",
+      () => this.acceptRealtimeWebSocket(request), "realtime");
+  }
+
+  private async acceptRealtimeWebSocket(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const rawEngineProtocol = url.searchParams.get("EIO");
     if (
@@ -1462,6 +1489,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     ws: WebSocket,
     message: string | ArrayBuffer,
   ): Promise<void> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "websocket",
+      () => this.processRealtimeWebSocketMessage(ws, message), "realtime");
+  }
+
+  private async processRealtimeWebSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     let attachment = this.realtimeWebSocketAttachment(ws);
     if (
       attachment !== null &&
@@ -1671,6 +1703,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     _reason: string,
     _wasClean: boolean,
   ): Promise<void> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "websocket",
+      () => this.processRealtimeWebSocketClose(ws), "realtime");
+  }
+
+  private async processRealtimeWebSocketClose(ws: WebSocket): Promise<void> {
     if (this.storageWritesBlocked()) {
       this.safeCloseWebSocket(ws, 1013, "storage temporarily unavailable");
       return;
@@ -1693,6 +1730,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   override async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "websocket",
+      () => this.processRealtimeWebSocketError(ws), "realtime");
+  }
+
+  private async processRealtimeWebSocketError(ws: WebSocket): Promise<void> {
     if (this.storageWritesBlocked()) {
       this.safeCloseWebSocket(ws, 1013, "storage temporarily unavailable");
       return;
@@ -2022,6 +2064,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
         if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
           this.realtimeDeviceStatusQueries.clear();
+          this.alertDeviceStatusQueries.clear();
         }
         try {
           this.realtime.recordApi3StorageMutationInTransaction(event);
@@ -2032,6 +2075,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
           if (event.collection === "entries" && !this.entryCacheMutation) this.realtimeEntryQueries.clear();
           if (event.collection === "devicestatus" && !this.deviceStatusCacheMutation) {
             this.realtimeDeviceStatusQueries.clear();
+            this.alertDeviceStatusQueries.clear();
           }
         }
       },
@@ -2050,6 +2094,23 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       },
       this.legacyTreatmentQueries,
       (collection, id, previousBody, nextBody) => {
+        if (collection === "devicestatus") {
+          if (!this.deviceStatusCacheMutation) {
+            this.alertDeviceStatusCheckpoint.beforeMutation(this.alertDeviceStatusQueries, { create: false });
+            this.api3DeviceStatusCheckpoint.beforeMutation(this.api3DeviceStatusQueries, { create: false });
+          }
+          let finish: (() => void) | undefined;
+          if (!this.deviceStatusCacheMutation) {
+            this.api3DeviceStatusQueries.clear();
+          } else {
+            finish = this.api3DeviceStatusQueries.beforeMutation(this.ctx.storage.sql, id, previousBody, nextBody);
+          }
+          return () => {
+            finish?.();
+            this.alertDeviceStatusCheckpoint.afterMutation(this.alertDeviceStatusQueries);
+            this.api3DeviceStatusCheckpoint.afterMutation(this.api3DeviceStatusQueries);
+          };
+        }
         if (collection !== "treatments") return undefined;
         new TreatmentMembershipReadView(this.ctx.storage.sql, this.legacyTreatmentQueries)
           .rememberMutation(id, previousBody, nextBody);
@@ -2070,6 +2131,7 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         this.clearTreatmentQueryResults();
         return () => this.clearTreatmentQueryResults();
       },
+      this.api3DeviceStatusQueries,
     );
   }
 
@@ -2081,6 +2143,8 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     if (collection === "devicestatus") {
       this.legacyDeviceStatusQueries.clear();
       if (!this.deviceStatusCacheMutation) this.legacyDeviceStatusCandidates.clear();
+      if (!this.deviceStatusCacheMutation) this.alertDeviceStatusQueries.clear();
+      if (!this.deviceStatusCacheMutation) this.api3DeviceStatusQueries.clear();
     }
     if (collection === "treatments") {
       this.auxiliaryTreatmentCold = true;
@@ -2312,16 +2376,19 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   private updateDeviceStatusQueryCache(document?: JsonDocument): void {
     if (!this.deviceStatusCacheMutation || document === undefined) {
       this.realtimeDeviceStatusQueries.clear();
+      this.alertDeviceStatusQueries.clear();
       this.legacyDeviceStatusCandidates.clear();
       return;
     }
-    if (!this.realtimeDeviceStatusQueries.ready && !this.legacyDeviceStatusCandidates.ready) return;
+    if (!this.realtimeDeviceStatusQueries.ready && !this.alertDeviceStatusQueries.ready
+      && !this.legacyDeviceStatusCandidates.ready) return;
     // Prefer the canonical storage id supplied by legacy writes. API3 may
     // supply only its public identifier; resolve that without scanning history.
     const id = document._id;
     const identity = document.identifier;
     if (typeof id !== "string" && typeof identity !== "string") {
       this.realtimeDeviceStatusQueries.clear();
+      this.alertDeviceStatusQueries.clear();
       this.legacyDeviceStatusCandidates.clear();
       return;
     }
@@ -2338,28 +2405,49 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
       ).toArray();
     if (rows.length !== 1) {
       this.realtimeDeviceStatusQueries.clear();
+      this.alertDeviceStatusQueries.clear();
       this.legacyDeviceStatusCandidates.clear();
     } else {
       this.realtimeDeviceStatusQueries.upsert(rows[0]!);
+      this.alertDeviceStatusQueries.upsert(rows[0]!, Date.now());
       this.legacyDeviceStatusCandidates.upsert(rows[0]!);
     }
   }
 
   private withDeviceStatusCacheMutation<T>(collection: string, operation: () => T): T {
     if (collection !== "devicestatus") return operation();
+    // Restore the committed raw proofs before the source trigger invalidates
+    // them. A cold upload can then maintain the same bounded cache as a warm one.
+    this.alertDeviceStatusCheckpoint.beforeMutation(this.alertDeviceStatusQueries, { create: false });
+    this.api3DeviceStatusCheckpoint.beforeMutation(this.api3DeviceStatusQueries, { create: false });
     // Repository operations are synchronous and own their SQLite transaction.
     // Only publish the fork after that transaction returns successfully.
     const committed = this.realtimeDeviceStatusQueries;
+    const committedAlerts = this.alertDeviceStatusQueries;
+    const committedApi3 = this.api3DeviceStatusQueries;
     const committedCandidates = this.legacyDeviceStatusCandidates;
+    const committedAlertCheckpoint = this.alertDeviceStatusCheckpoint;
+    const committedApi3Checkpoint = this.api3DeviceStatusCheckpoint;
     const previousMutation = this.deviceStatusCacheMutation;
     this.realtimeDeviceStatusQueries = committed.fork();
+    this.alertDeviceStatusQueries = committedAlerts.fork();
+    this.api3DeviceStatusQueries = committedApi3.fork();
     this.legacyDeviceStatusCandidates = committedCandidates.fork();
+    this.alertDeviceStatusCheckpoint = committedAlertCheckpoint.fork();
+    this.api3DeviceStatusCheckpoint = committedApi3Checkpoint.fork();
     this.deviceStatusCacheMutation = true;
     try {
-      return operation();
+      const result = operation();
+      this.alertDeviceStatusCheckpoint.persist(this.alertDeviceStatusQueries);
+      this.api3DeviceStatusCheckpoint.persist(this.api3DeviceStatusQueries);
+      return result;
     } catch (error) {
       this.realtimeDeviceStatusQueries = committed;
+      this.alertDeviceStatusQueries = committedAlerts;
+      this.api3DeviceStatusQueries = committedApi3;
       this.legacyDeviceStatusCandidates = committedCandidates;
+      this.alertDeviceStatusCheckpoint = committedAlertCheckpoint;
+      this.api3DeviceStatusCheckpoint = committedApi3Checkpoint;
       this.legacyDeviceStatusQueries.clear();
       throw error;
     } finally {
@@ -2630,6 +2718,14 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     }
 
     if (runtime.upbat || runtime.pump || runtime.openAps || runtime.xdripJs || runtime.loop) {
+      this.alertDeviceStatusCheckpoint.hydrate(this.alertDeviceStatusQueries, { create: true });
+      const cacheFields = [
+        ...(runtime.upbat ? ["uploader", "uploaderBattery"] : []),
+        ...(runtime.pump ? ["pump"] : []),
+        ...(runtime.openAps ? ["openaps"] : []),
+        ...(runtime.xdripJs ? ["xdripjs"] : []),
+        ...(runtime.loop ? ["loop"] : []),
+      ];
       const enabledFields = [
         runtime.upbat
           ? "(json_type(body, '$.uploader') IS NOT NULL OR json_type(body, '$.uploaderBattery') IS NOT NULL)"
@@ -2640,32 +2736,44 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
         runtime.loop ? "json_type(body, '$.loop') IS NOT NULL" : null,
       ].filter((predicate): predicate is string => predicate !== null).join(" OR ");
       const safeFields = `CASE WHEN json_valid(body) THEN (${enabledFields}) ELSE 0 END`;
-      result.devicestatus = this.realtimeDocuments(
-        `SELECT id, body, sort_time
+      const recentStatement = `SELECT id, body, sort_time, updated_at
          FROM documents
          WHERE collection = 'devicestatus'
            AND sort_time >= ?
            AND sort_time <= ?
            AND ${safeFields}
          ORDER BY sort_time DESC, updated_at DESC, id ASC
-         LIMIT 1000`,
-        [now - REALTIME_DEVICE_STATUS_WINDOW_MS, now],
+         LIMIT 1000`;
+      const lower = now - REALTIME_DEVICE_STATUS_WINDOW_MS;
+      result.devicestatus = this.realtimeDocuments(
+        recentStatement,
+        [lower, now],
         budget,
         normalizeRealtimeDeviceStatus,
+        this.alertDeviceStatusQueries.read(recentStatement, cacheFields, lower, now, () =>
+          this.ctx.storage.sql.exec<DbDocument>(recentStatement, lower, now)),
       );
-      const future = this.realtimeDocuments(
-        `SELECT id, body, sort_time
+      // Preserve the original future predicate and order; its first matching
+      // timestamp is also the cache's exact next activation boundary.
+      const futureStatement = `SELECT id, body, sort_time, updated_at
          FROM documents
          WHERE collection = 'devicestatus'
            AND sort_time > ?
            AND ${safeFields}
          ORDER BY sort_time ASC, updated_at DESC, id ASC
-         LIMIT 1`,
+         LIMIT 1`;
+      const futureRow = this.alertDeviceStatusQueries.future(futureStatement, now, () =>
+        this.ctx.storage.sql.exec<DbDocument>(futureStatement, now).toArray()[0]);
+      this.alertDeviceStatusQueries.rememberFuture(futureRow);
+      const future = this.realtimeDocuments(
+        futureStatement,
         [now],
         budget,
         normalizeRealtimeDeviceStatus,
+        futureRow === undefined ? [] : [futureRow],
       );
       result.devicestatus.push(...future);
+      this.alertDeviceStatusCheckpoint.persist(this.alertDeviceStatusQueries);
     }
 
     if (runtime.pump) {
@@ -2744,7 +2852,15 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
 
   private automaticPluginNotificationEvaluation(
     now: number,
-    runtime = this.resolvedAutomaticNotificationRuntime(now),
+    runtime?: AutomaticNotificationRuntime,
+  ): AutomaticNotificationEvaluation {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "notification",
+      () => this.evaluateAutomaticPluginNotifications(now, runtime ?? this.resolvedAutomaticNotificationRuntime(now)), "read");
+  }
+
+  private evaluateAutomaticPluginNotifications(
+    now: number,
+    runtime: AutomaticNotificationRuntime,
   ): AutomaticNotificationEvaluation {
     const notifications: RealtimeDocument[] = [];
     const snoozes: RealtimeDocument[] = [];
@@ -3048,6 +3164,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   private async processDueBackgroundTasks(now: number): Promise<void> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "background",
+      () => this.executeDueBackgroundTasks(now), "write");
+  }
+
+  private async executeDueBackgroundTasks(now: number): Promise<void> {
     const tasks = this.backgroundTasks();
     for (const kind of this.dataUpdateDebounce().consumeDue(
       now,
@@ -4681,6 +4802,11 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   }
 
   override async alarm(_alarmInfo?: AlarmInvocationInfo): Promise<void> {
+    return withStorageDiagnostics(this.ctx.storage.sql, this.env.READ_DIAGNOSTICS, "alarm",
+      () => this.processScheduledAlarm(), "realtime");
+  }
+
+  private async processScheduledAlarm(): Promise<void> {
     if (this.storageWritesBlocked()) {
       this.realtimeAlarmRecoveryPending = true;
       return;
@@ -5127,7 +5253,17 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
   async diagnosticRead(operation: string, args: unknown[], traceId: string) {
     if (!isDiagnosticReadOperation(operation)) throw new Error("Unsupported diagnostic read operation");
     const reader = (this as unknown as Record<string, (...args: unknown[]) => unknown>)[operation]!;
-    return measureDiagnosticRead(this.ctx.storage.sql, operation, () => Reflect.apply(reader, this, args), traceId);
+    return measureDiagnosticRead(this.ctx.storage.sql, operation,
+      () => withStorageDiagnostics(this.ctx.storage.sql, "1", "rpc",
+        () => Reflect.apply(reader, this, args), "read", traceId), traceId);
+  }
+
+  async diagnosticStorageOperation(operation: string, args: unknown[], traceId: string) {
+    if (!isDiagnosticStorageOperation(operation)) throw new Error("Unsupported diagnostic storage operation");
+    const action = (this as unknown as Record<string, (...args: unknown[]) => unknown>)[operation]!;
+    return measureDiagnosticStorageOperation(this.ctx.storage.sql, operation,
+      () => withStorageDiagnostics(this.ctx.storage.sql, "1", "rpc",
+        () => Reflect.apply(action, this, args), diagnosticStorageOperationKind(operation), traceId), traceId);
   }
 
   async getLegacyProfileCurrentJson(): Promise<string> {
@@ -5623,12 +5759,17 @@ export class EntryStore extends DurableObject<EntryStoreEnv> {
     if (collection === "treatments") this.advanceTreatmentReadIndex();
     try {
       const query = JSON.parse(queryJson) as DocumentQuery;
+      if (collection === "devicestatus") {
+        this.api3DeviceStatusCheckpoint.hydrate(this.api3DeviceStatusQueries, { create: true });
+      }
       const load = () => JSON.stringify({
         ok: true,
         result: this.documentRepository().queryDocumentsForApi3(collection, query),
       });
-      return collection === "treatments"
+      const result = collection === "treatments"
         ? this.legacyTreatmentQueries.read(`api3:${JSON.stringify(query)}`, load) : load();
+      if (collection === "devicestatus") this.api3DeviceStatusCheckpoint.persist(this.api3DeviceStatusQueries);
+      return result;
     } catch (error) {
       if (isDurableObjectReadQuotaError(error)) throw error;
       return JSON.stringify({
