@@ -7,7 +7,7 @@ import {
 } from "./server-query";
 
 const MAX_ENTRY_BATCH_SIZE = 1_000;
-const DEFAULT_ENTRIES_MAX_COUNT = 10_000;
+const DEFAULT_ENTRIES_MAX_COUNT = 50_000;
 export const LEGACY_ENTRY_DEFAULT_WINDOW_MS = LEGACY_QUERY_DEFAULT_WINDOW_MS;
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 
@@ -332,8 +332,8 @@ export function parseHistoryQuery(
   url: URL,
   configuredMaxCount: unknown = DEFAULT_ENTRIES_MAX_COUNT,
 ): HistoryQuery {
-  // An optional deployment setting can admit larger history exports without
-  // changing the default limit or silently truncating a client's request.
+  // This testing build accepts larger history exports out of the box. An
+  // optional deployment setting can override the cap without truncating requests.
   const configured = typeof configuredMaxCount === "string" || typeof configuredMaxCount === "number"
     ? Number(configuredMaxCount)
     : NaN;

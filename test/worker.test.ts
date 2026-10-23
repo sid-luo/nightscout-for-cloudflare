@@ -1375,7 +1375,7 @@ describe("Nightscout compatibility API", () => {
     });
     expect(malformed.status).toBe(400);
 
-    const badCount = await SELF.fetch(`https://example.test/api/v1/entries.json?tenant=${name}&count=10001`);
+    const badCount = await SELF.fetch(`https://example.test/api/v1/entries.json?tenant=${name}&count=50001`);
     expect(badCount.status).toBe(400);
 
     const badTenant = await SELF.fetch("https://example.test/api/v1/entries.json?tenant=Not%20Safe");

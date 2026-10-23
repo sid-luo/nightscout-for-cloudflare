@@ -8,7 +8,7 @@ version is tracked separately. Existing users should follow the
 
 ## 20261023-beta — Larger Entries request compatibility (2026-10-23, testing)
 
-Builds on 20261022-beta with optional compatibility improvements for larger Entries requests. Default behavior remains unchanged. The upstream Nightscout and API versions remain unchanged.
+Builds on 20261022-beta and allows up to 50,000 Entries per request by default for apps that fetch larger histories. The upstream Nightscout and API versions remain unchanged.
 
 This entry describes the testing source; this version is not yet available on the upgrade page.
 

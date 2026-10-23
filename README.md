@@ -43,7 +43,7 @@ Nightscout is a great project. As a long-time user, I hope more people can deplo
 
 ## What is new in 20261023-beta
 
-- Add optional compatibility improvements for larger Entries requests while keeping the default behavior unchanged.
+- Allow up to 50,000 Entries per request by default for apps that fetch larger histories.
 
 This version also includes the improvements from 20261022-beta:
 

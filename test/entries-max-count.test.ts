@@ -68,21 +68,25 @@ async function expectCountError(response: Response, maximum: number): Promise<vo
 }
 
 describe("optional legacy Entries maximum count", () => {
-  it("keeps the existing 10000 boundary when the deployment has no override", async () => {
+  it("defaults to 50000 and allows an explicit 10000 maximum to tighten the boundary", async () => {
     const name = tenant();
-    const accepted = await request(name, "/api/v1/entries.json?count=10000");
+    const accepted = await request(name, "/api/v1/entries.json?count=50000");
     expect(accepted.status).toBe(200);
     expect(await accepted.json()).toEqual([]);
-    await expectCountError(await request(name, "/api/v1/entries.json?count=10001"), 10000);
+    await expectCountError(await request(name, "/api/v1/entries.json?count=50001"), 50000);
+    const limited = await request(name, "/api/v1/entries.json?count=10000", "10000");
+    expect(limited.status).toBe(200);
+    expect(await limited.json()).toEqual([]);
+    await expectCountError(await request(name, "/api/v1/entries.json?count=10001", "10000"), 10000);
   });
 
-  it("falls back to 10000 for invalid deployment values", async () => {
+  it("falls back to 50000 for invalid deployment values", async () => {
     const name = tenant();
     for (const value of ["", " ", "0", "-1", "1.5", "Infinity", "NaN", "10000oops", "9007199254740992"]) {
-      const accepted = await request(name, "/api/v1/entries.json?count=10000", value);
+      const accepted = await request(name, "/api/v1/entries.json?count=50000", value);
       expect(accepted.status, JSON.stringify(value)).toBe(200);
       expect(await accepted.json()).toEqual([]);
-      await expectCountError(await request(name, "/api/v1/entries.json?count=10001", value), 10000);
+      await expectCountError(await request(name, "/api/v1/entries.json?count=50001", value), 50000);
     }
   });
 
@@ -110,7 +114,7 @@ describe("optional legacy Entries maximum count", () => {
   it("preserves the omitted-count default and respects a configured maximum below ten", async () => {
     const name = tenant();
     await seed(name, 12, Date.now() - 20 * 60000);
-    for (const [maximum, length] of [[undefined, 10], ["50000", 10], ["3", 3], ["1", 1]] as const) {
+    for (const [maximum, length] of [[undefined, 10], ["10000", 10], ["1000000", 10], ["3", 3], ["1", 1]] as const) {
       const response = await request(name, "/api/v1/entries.json", maximum);
       expect(response.status).toBe(200);
       const rows = await response.json<Entry[]>();
@@ -128,8 +132,8 @@ describe("optional legacy Entries maximum count", () => {
           ["json", "application/json"], ["csv", "text/csv"],
           ["tsv", "text/tab-separated-values"], ["txt", "text/plain"],
         ]) {
-          const path = `/api/v${version}/${route}.${format}?count=50000`;
-          const response = await request(name, path, "50000");
+          const path = `/api/v${version}/${route}.${format}?count=60000`;
+          const response = await request(name, path, "60000");
           expect(response.status, path).toBe(200);
           expect(response.headers.get("Content-Type"), path).toBe(`${contentType}; charset=utf-8`);
           if (format === "json") {
@@ -142,7 +146,7 @@ describe("optional legacy Entries maximum count", () => {
     }
   });
 
-  it("returns a complete 50000-row GlucoLens date-range response over real Durable Object RPC", async () => {
+  it("returns a complete 50000-row GlucoLens response over real Durable Object RPC without any deployment override", async () => {
     const name = tenant();
     const firstDate = Date.UTC(2026, 0, 1);
     const lastDate = firstDate + 49999 * 60000;
@@ -150,8 +154,8 @@ describe("optional legacy Entries maximum count", () => {
     // Match GlucoLens' actual request syntax. The newest fixture row falls just
     // outside the requested interval and must not displace a matching result.
     const path = `/api/v1/entries.json?find[date][$gte]=${firstDate}&find[date][$lte]=${lastDate}&count=50000`;
-    await expectCountError(await request(name, path), 10000);
-    const response = await request(name, path, "50000");
+    await expectCountError(await request(name, path, "10000"), 10000);
+    const response = await request(name, path);
     expect(response.status).toBe(200);
     const rows = await response.json<Entry[]>();
     expect(rows).toHaveLength(50000);
@@ -169,7 +173,7 @@ describe("optional legacy Entries maximum count", () => {
       "/api/v1/times/2026-01-01",
       "/api/v2/slice/entries/dateString/sgv/2026-01-01",
     ]) {
-      const raised = await request(name, `${path}.json?count=50000`, "50000");
+      const raised = await request(name, `${path}.json?count=50000`);
       expect(raised.status, path).toBe(200);
       expect(await raised.json()).toHaveLength(30);
       await expectCountError(await request(name, `${path}.json?count=4`, "3"), 3);
