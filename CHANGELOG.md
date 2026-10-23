@@ -10,7 +10,7 @@ version is tracked separately. Existing users should follow the
 
 Builds on 20261022-beta and allows up to 50,000 Entries per request by default for apps that fetch larger histories. The upstream Nightscout and API versions remain unchanged.
 
-This entry describes the testing source; this version is not yet available on the upgrade page.
+On 2026-10-24, the Chinese and English upgrade pages began offering **20261023-beta** as the default testing upgrade, with **20261022-beta** and stable **1.4.0** also available for manual selection. Each selection uses its own fixed package; already-started upgrade jobs resume their original target. New installations continue to use **1.4.0**. This is a testing release; existing instances are not upgraded automatically.
 
 ## 20261022-beta — Device-status reads across hibernation (2026-10-22, testing)
 
