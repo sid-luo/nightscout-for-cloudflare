@@ -18,9 +18,9 @@ Cloudflare，无需单独租用服务器或 MongoDB 服务。
 这是独立的非官方移植版，不是 Nightscout 官方发布。
 实际费用取决于 Cloudflare 套餐和用量。
 
-Nightscout for Cloudflare 版本：**20261022-beta**
+Nightscout for Cloudflare 版本：**20261023-beta**
 
-本分支为测试版；快速安装器新安装仍使用 **1.4.0**。升级页默认选中 **20261022-beta**，同时保留 **1.4.0** 供手动选择；核对并确认原实例后升级。
+本分支为 **20261023-beta** 测试版源码，该版本尚未加入升级页。快速安装器新安装仍使用 **1.4.0**。升级页目前默认选中 **20261022-beta**，同时保留 **1.4.0** 供手动选择；核对并确认原实例后升级。
 
 Nightscout 上游版本：**15.0.8**
 
@@ -41,7 +41,11 @@ Nightscout 是一个伟大的项目。作为多年的用户，我希望更多人
 - 在 Admin Tools 中预览、清理血糖、治疗和设备状态记录，管理 Profile。
 - 按需启用数据来源与 Webhook；新增接入默认关闭，真实第三方兼容范围仍在验证。
 
-## 20261022-beta 更新内容
+## 20261023-beta 更新内容
+
+- 新增可选的大批量 Entries 兼容改进，默认行为保持不变。
+
+本版同时包含 20261022-beta 的改进：
 
 - Cloudflare 对象休眠后继续复用设备状态查询和告警输入，减少客户端轮询时重复读取历史记录。
 - 上传、修改和删除后保持结果及时更新，保留筛选、排序、分页和事务回滚行为。
@@ -76,7 +80,7 @@ Nightscout for Cloudflare 是 Nightscout 的独立、非官方 Cloudflare
 移植版本。Nightscout 上游版本和移植版本使用各自独立的版本号：
 
 - Nightscout 上游版本：**15.0.8**
-- Nightscout for Cloudflare 版本：**20261022-beta**
+- Nightscout for Cloudflare 版本：**20261023-beta**
 
 原版 Admin Tools 的对应功能仍然保留，但本项目使用 SQLite Durable Objects
 存储数据，而不是 MongoDB。因此，页面中的部分名称会调整为与实际存储方式无关

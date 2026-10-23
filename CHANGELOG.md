@@ -6,6 +6,12 @@ This log covers Nightscout for Cloudflare changes. The upstream Nightscout
 version is tracked separately. Existing users should follow the
 [upgrade instructions](README.md#2-upgrading). Upgrades currently support only instances deployed with the quick installer.
 
+## 20261023-beta — Larger Entries request compatibility (2026-10-23, testing)
+
+Builds on 20261022-beta with optional compatibility improvements for larger Entries requests. Default behavior remains unchanged. The upstream Nightscout and API versions remain unchanged.
+
+This entry describes the testing source; this version is not yet available on the upgrade page.
+
 ## 20261022-beta — Device-status reads across hibernation (2026-10-22, testing)
 
 Builds on 1.4.0 and starts date-based project version labels. The public version is `20261022-beta`; npm metadata uses `2026.10.22-beta`. The upstream Nightscout and API versions remain unchanged. See [version naming](docs/testing/VERSIONING.md).

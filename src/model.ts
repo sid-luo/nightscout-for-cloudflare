@@ -7,6 +7,7 @@ import {
 } from "./server-query";
 
 const MAX_ENTRY_BATCH_SIZE = 1_000;
+const DEFAULT_ENTRIES_MAX_COUNT = 10_000;
 export const LEGACY_ENTRY_DEFAULT_WINDOW_MS = LEGACY_QUERY_DEFAULT_WINDOW_MS;
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 
@@ -327,11 +328,22 @@ function uniqueParameter(url: URL, name: string): string | null {
   return values[0] ?? null;
 }
 
-export function parseHistoryQuery(url: URL): HistoryQuery {
-  const rawCount = uniqueParameter(url, "count") || "10";
+export function parseHistoryQuery(
+  url: URL,
+  configuredMaxCount: unknown = DEFAULT_ENTRIES_MAX_COUNT,
+): HistoryQuery {
+  // An optional deployment setting can admit larger history exports without
+  // changing the default limit or silently truncating a client's request.
+  const configured = typeof configuredMaxCount === "string" || typeof configuredMaxCount === "number"
+    ? Number(configuredMaxCount)
+    : NaN;
+  const maxCount = Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_ENTRIES_MAX_COUNT;
+  const rawCount = uniqueParameter(url, "count") || String(Math.min(10, maxCount));
   const count = Number(rawCount);
-  if (!Number.isInteger(count) || count < 1 || count > 10000) {
-    throw new ApiError(400, "invalid_query", "count must be an integer from 1 to 10000");
+  if (!Number.isSafeInteger(count) || count < 1 || count > maxCount) {
+    throw new ApiError(400, "invalid_query", `count must be an integer from 1 to ${maxCount}`);
   }
 
   const type = parseEntryTypeFilter(url);

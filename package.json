@@ -1,7 +1,7 @@
 {
   "name": "nscf",
-  "version": "2026.10.22-beta",
-  "nscfVersion": "20261022-beta",
+  "version": "2026.10.23-beta",
+  "nscfVersion": "20261023-beta",
   "private": true,
   "description": "NSCF — an independent, unofficial Nightscout v15.0.8 port for Cloudflare Workers",
   "license": "AGPL-3.0-only",

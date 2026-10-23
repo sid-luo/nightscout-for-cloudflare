@@ -18,9 +18,9 @@ without renting a separate server or MongoDB service.
 It is an independent, unofficial port, not an official Nightscout release.
 Actual costs depend on your Cloudflare plan and usage.
 
-Nightscout for Cloudflare version: **20261022-beta**
+Nightscout for Cloudflare version: **20261023-beta**
 
-This is the testing branch. New web-installer installations still use **1.4.0**. The upgrade page defaults to **20261022-beta** and keeps **1.4.0** available for manual selection; check and confirm the original instance before upgrading.
+This is the **20261023-beta** testing source; this version is not yet available on the upgrade page. New web-installer installations still use **1.4.0**. The upgrade page currently defaults to **20261022-beta** and keeps **1.4.0** available for manual selection; check and confirm the original instance before upgrading.
 
 Upstream Nightscout version: **15.0.8**
 
@@ -41,7 +41,11 @@ Nightscout is a great project. As a long-time user, I hope more people can deplo
 - Preview and clean up glucose, treatment and device-status records, and manage Profiles in Admin Tools.
 - Enable data sources and Webhooks as needed. Newly added integrations are disabled by default; real third-party compatibility is still being validated.
 
-## What is new in 20261022-beta
+## What is new in 20261023-beta
+
+- Add optional compatibility improvements for larger Entries requests while keeping the default behavior unchanged.
+
+This version also includes the improvements from 20261022-beta:
 
 - Reuse device-status queries and alert inputs after Cloudflare objects hibernate, reducing repeated history reads during client polling.
 - Keep results current during uploads, updates and deletions while preserving filtering, sorting, pagination and rollback behavior.
@@ -78,7 +82,7 @@ Nightscout. It keeps the upstream Nightscout version and the port version
 separate:
 
 - Nightscout upstream version: **15.0.8**
-- Nightscout for Cloudflare version: **20261022-beta**
+- Nightscout for Cloudflare version: **20261023-beta**
 
 The upstream Admin Tools still provide their corresponding functions, but this
 port stores records in SQLite Durable Objects instead of MongoDB. Some visible

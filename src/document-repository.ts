@@ -727,13 +727,13 @@ function jsonPath(field: string): string {
   return `$.${field.split(".").map((segment) => `"${segment}"`).join(".")}`;
 }
 
-function boundedLimit(limit: number | undefined): number {
+function boundedLimit(limit: number | undefined, maxLimit = MAX_LIMIT): number {
   if (limit === undefined) return 1_000;
   // Locked Mongo treats cursor.limit(0) as unlimited. Keep the request bounded
   // to API3's configured maximum on the Free-plan adapter instead of 500ing.
   if (limit === 0) return 1_000;
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
-    throw new Error(`limit must be an integer from 1 to ${MAX_LIMIT}`);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxLimit) {
+    throw new Error(`limit must be an integer from 1 to ${maxLimit}`);
   }
   return limit;
 }
@@ -2631,6 +2631,7 @@ export class SqliteDocumentRepository {
     query: DocumentQuery,
     policy: MaterializationPolicy,
     collection: Api3CollectionName = TREATMENTS,
+    maxLimit = MAX_LIMIT,
   ): DbDocumentV4[] {
     const useLegacyDateStringIndex = collection === ENTRIES
       && policy === "legacy"
@@ -2711,7 +2712,7 @@ export class SqliteDocumentRepository {
       }
       order = orderParts.join(", ");
     }
-    const limit = boundedLimit(query.limit);
+    const limit = boundedLimit(query.limit, maxLimit);
     const skip = boundedSkip(query.skip);
     const originalSource = source;
 
@@ -3135,11 +3136,14 @@ export class SqliteDocumentRepository {
     if (query.type !== null && query.type !== undefined) {
       filters.push({ field: "type", operator: "eq", value: query.type });
     }
+    // The HTTP adapter applies ENTRIES_MAX_COUNT before constructing this
+    // query. Do not reapply the generic collection cap to a validated export;
+    // the independent unindexed scan budget still applies below this boundary.
     return this.queryTreatmentRows({
       filters,
       sort: query.sort.map((sort) => ({ ...sort })),
       limit: query.count,
-    }, "legacy", ENTRIES).map(materializeLegacy);
+    }, "legacy", ENTRIES, Number.MAX_SAFE_INTEGER).map(materializeLegacy);
   }
 
   countLegacyDocuments(

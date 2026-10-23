@@ -55,8 +55,8 @@ test("Deploy to Cloudflare template requests one plaintext value and a clean-sou
     "node --test scripts/cloudflare-auto-update.test.mjs",
   );
   assert.equal(packageJson.scripts?.deploy, "wrangler deploy");
-  assert.equal(packageJson.version, "2026.10.22-beta");
-  assert.equal(packageJson.nscfVersion, "20261022-beta");
+  assert.equal(packageJson.version, "2026.10.23-beta");
+  assert.equal(packageJson.nscfVersion, "20261023-beta");
   assert.equal(displayProjectVersion(packageJson), packageJson.nscfVersion);
   assert.equal(
     packageJson.repository?.url,

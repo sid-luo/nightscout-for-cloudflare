@@ -177,6 +177,7 @@ type AppEnv = Omit<Env, "API_SECRET"> & DexcomShareEnvironment & SourceEnvironme
   SOURCE_CONNECTOR: DurableObjectNamespace<SourceConnector>;
   API_SECRET?: string;
   API3_MAX_LIMIT?: string;
+  ENTRIES_MAX_COUNT?: string;
   ALLOW_UNRESTRICTED_FRAME_EMBEDDING?: string;
   AUTH_DEFAULT_ROLES?: string;
   AUTH_FAIL_DELAY?: string;
@@ -1679,7 +1680,7 @@ async function queryLegacyPatternEntries(
   countProbe.searchParams.delete("find[dateString][$lt]");
   if (type !== undefined) countProbe.searchParams.set("find[type]", type);
   countProbe.searchParams.set("find[dateString][$gte]", "0000");
-  const requestedCount = parseHistoryQuery(countProbe).count;
+  const requestedCount = parseHistoryQuery(countProbe, env.ENTRIES_MAX_COUNT).count;
   const candidateCount = plan.patterns.length === 1 && plan.patterns[0] === ""
     ? requestedCount
     : MAX_LEGACY_PATTERN_CANDIDATES;
@@ -1701,7 +1702,9 @@ async function queryLegacyPatternEntries(
     queryUrl.searchParams.set("find[dateString][$lt]", `${prefix}\uffff`);
     queryUrl.searchParams.set("count", String(candidateCount));
     if (type !== undefined) queryUrl.searchParams.set("find[type]", type);
-    const query = parseHistoryQuery(queryUrl);
+    // The user's count was checked above. This internal query retains the
+    // separate pattern candidate budget even when the configured max is lower.
+    const query = parseHistoryQuery(queryUrl, candidateCount);
     const decision = JSON.parse(await store.getEntriesJson(query)) as
       | { ok: true; result: PublicEntry[] }
       | { ok: false; status?: number; message: string };
@@ -2121,7 +2124,7 @@ async function handleEntriesApi(
       }
       return renderLegacyEntries(request, entries, splitPath.extension, entries[0]?.type);
     }
-    const query = parseHistoryQuery(url);
+    const query = parseHistoryQuery(url, env.ENTRIES_MAX_COUNT);
     if (spec !== undefined) query.type = spec;
     const decision = JSON.parse(spec === undefined
       ? await legacyEntriesResponse(store, query, request.headers.get("If-Modified-Since"))
